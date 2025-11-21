@@ -1,1716 +1,2071 @@
-# Fuzzing
+## Finding Vulnerabilities Through Fuzzing
 
-automated software testing technique that is used for program analysis
+## Overview
 
-## Types
+This document is Week 2 of a multi‑week exploit development course, focusing on discovering vulnerabilities through fuzzing techniques and analyzing the crashes to determine exploitability.
 
-### BlackBox
+Last week we studied vulnerability classes through real-world examples. This week we'll learn to find these vulnerabilities ourselves using fuzzing - the automated technique that has discovered thousands of critical security bugs in production software.
 
-- Generates random or model‑based inputs and feeds them into the program under test
-- Fuzzer has no knowledge of the program internals during fuzzing
-- Pros
-  - Extremely fast
-  - Easy to use
-  - Scalable
-- Cons
-  - Random testing leads to poor coverage
+Fuzzing can feel a bit front‑loaded: you may spend time wiring harnesses and running campaigns without immediately finding exciting new bugs, especially on hardened or well‑tested targets. That’s normal, and it's one reason the next week on patch diffing often feels more directly "practical" — many companies already run large fuzzing setups and need people who can understand and exploit the bugs those systems uncover. Still, working through this week is important: it teaches you how fuzzers actually discover real vulnerabilities, so when you later triage crashes or study patches, you'll have a solid intuition for how those bugs were found and how to reproduce them.
 
-### GreyBox
+### Prerequisites
 
-- Relies on lightweight instrumentation of the program under test
-- Fuzzer has some knowledge of the program internals during fuzzing
-- Pros
-  - Feedback
-  - Scalable
-  - Relatively fast
-- Cons
-  - Simplistic mutations
-- Examples
-  - General: [AFL++](https://github.com/AFLplusplus/AFLplusplus), [Honggfuzz](https://github.com/google/honggfuzz), [BooFuzz](https://github.com/jtpereyda/boofuzz), [WinAFL](https://github.com/googleprojectzero/winafl)
-  - Directed: [UAFuzz](https://github.com/strongcourage/uafuzz), [AFLGo](https://github.com/aflgo/aflgo)
-  - Grammar Based: [Tlspuffin](https://github.com/tlspuffin/tlspuffin), [AFLSmart](https://github.com/aflsmart/aflsmart)
-  - Taint Based: [Angora](https://github.com/AngoraFuzzer/Angora),
-  - Concolic: [QSYM](https://github.com/sslab-gatech/qsym), [AFL](https://aflplus.plus/libafl-book/advanced_features/concolic/concolic.html), [SymSan](https://github.com/R-Fuzz/symsan)
-  - Self‑learning: [SieveFuzz](https://github.com/SieveFuzz/SieveFuzz), [RL‑Fuzz](https://github.com/fuzzwareorg/rl-fuzz)
-  - Binary Fuzzing: [Jackalope](https://github.com/googleprojectzero/Jackalope)
-  - Special Fuzzers: [Papora](https://github.com/ambergroup-labs/papora), [Medusa](https://github.com/trailofbits/medusa)
-  - Kernel: [syzkaller](https://github.com/google/syzkaller), [kAFL](https://github.com/IntelLabs/kAFL), [wtf](https://github.com/0vercl0k/wtf), [KF/x](https://github.com/intel/kernel-fuzzer-for-xen-project)
-  - ETC: [LibAFL](https://github.com/AFLplusplus/LibAFL) (snapshot & Unicorn support 0.15.x), [FuzzBench](https://google.github.io/fuzzbench/), [ClusterFuzz](https://github.com/google/clusterfuzz), [DynamoRIO](https://github.com/DynamoRIO/dynamorio)
+Before starting this week, ensure you have:
 
-### Snapshot
+- A Linux virtual machine (Ubuntu 24.04 recommended) with at least 8GB RAM and 8 cpu cores
+- Basic understanding of C/C++ programming
+- Familiarity with command-line tools and debugging (GDB basics)
+- Understanding of memory corruption vulnerabilities (from Week 1)
 
-- Takes and restores memory/register snapshots of the target or VM to bypass expensive initialization.
-- Pros
-  - Order‑of‑magnitude faster execution on large or stateful binaries
-  - Deterministic and easily reproducible
-  - Works with closed‑source targets (no rebuild needed)
-- Cons
-  - Initial snapshot & harness creation can be complex
-  - Requires specialised snapshot engine support (e.g., Nyx, Snapchange, wtf)
-- Examples
-  - [Nyx](https://github.com/nyx-fuzz/Nyx) (v2 with Intel‑PT support; note: Nyx integration requires the AFL++-Nyx fork, not mainline AFL++ 4.x)
-  - [Snapchange](https://github.com/awslabs/snapchange)
-  - [wtf](https://github.com/0vercl0k/wtf)
+## Day 1: Introduction to Fuzzing
 
-#### Snapshot Fuzzing Recipes
-
-- **AFL++ Nyx (user-mode)**
+- **Goal**: Understand the fundamentals of fuzzing and get hands-on experience with `AFL++`.
+- **Activities**:
+  - _Reading_: "Fuzzing for Software Security Testing and Quality Assurance" by `Ari Takanen`(From 1.3.2 to 1.3.8 and 2.4.1 to 2.7.5).
+  - _Online Resource_:
+    - [Fuzzing Book by `Andreas Zeller`](https://www.fuzzingbook.org/) - Read "Introduction" and "Fuzzing Basics."
+    - [`AFL++` Documentation](https://aflplus.plus/docs/) - Follow the quick start guide.
+    - [Interactive Module to Learn Fuzzing](https://github.com/alex-maleno/Fuzzing-Module.git)
+  - _Real-World Context_:
+    - [Google OSS-Fuzz: Finding 36,000+ bugs across 1,000+ projects](https://google.github.io/oss-fuzz/)
+    - [AFL Success Stories](https://lcamtuf.blogspot.com/2014/11/afl-fuzz-nobody-expects-cdata-sections.html) - Real vulnerabilities found by AFL
+  - _Exercise_:
+    - Set up a Linux virtual machine (VM) with the necessary tools installed, including compilers and debuggers
+    - Run `AFL++` on a C program
+    - If possible, use or write a small C program that contains a simple version of one of the Week 1 vulnerability classes (for example, a stack buffer overflow or integer overflow) so you can see fuzzing rediscover it.
 
 ```bash
-NYX_MODE=1 AFL_MAP_SIZE=1048576 afl-fuzz -i seeds -o findings -- ./target_nyx @@
+# Setting up AFL++
+
+# Install build dependencies
+sudo apt update
+sudo apt install -y build-essential gcc-13-plugin-dev cpio python3-dev libcapstone-dev \
+    pkg-config libglib2.0-dev libpixman-1-dev automake autoconf python3-pip \
+    ninja-build cmake git wget python3.12-venv meson
+
+# Install LLVM (check latest version at https://apt.llvm.org/)
+wget https://apt.llvm.org/llvm.sh
+chmod +x llvm.sh
+sudo ./llvm.sh 19 all
+
+# Verify LLVM installation
+clang-19 --version
+llvm-config-19 --version
+
+# Install Rust (required for some AFL++ components)
+curl --proto '=https' --tlsv1.2 -sSf "https://sh.rustup.rs" | sh
+source ~/.cargo/env
+
+# Build and install AFL++
+mkdir -p ~/soft && cd ~/soft
+git clone --depth 1 https://github.com/AFLplusplus/AFLplusplus.git
+cd AFLplusplus
+# NOTE: unicorn support might fail(you need to add the env or run ./build_unicorn_support.py and fix issues yourself)
+make distrib
+sudo make install
+
+# Verify installation
+which afl-fuzz
+afl-fuzz --version
+
+# Phase 1: Simple crash example
+cd ~/ && mkdir -p tuts && cd tuts
+git clone --branch main --depth 1 https://github.com/alex-maleno/Fuzzing-Module.git
+cd Fuzzing-Module/exercise1 && mkdir -p build && cd build
+
+# Compile with AFL++ instrumentation
+CC=/usr/local/bin/afl-clang-fast CXX=/usr/local/bin/afl-clang-fast++ cmake ..
+make
+
+# Create seed inputs
+cd .. && mkdir -p seeds && cd seeds
+for i in {0..4}; do
+    dd if=/dev/urandom of=seed_$i bs=64 count=10 2>/dev/null
+done
+
+# Run AFL++ fuzzer
+cd ../build
+echo core | sudo tee /proc/sys/kernel/core_pattern
+afl-fuzz -i ../seeds/ -o out -m none -d -- ./simple_crash
+
+# Expected output: AFL++ interface showing coverage, crashes, etc.
+# Look for crashes in out/crashes/ directory
+
+# Phase 2: Medium complexity example
+cd ~/tuts/Fuzzing-Module/exercise2 && mkdir -p build && cd build
+CC=/usr/local/bin/afl-clang-lto CXX=/usr/local/bin/afl-clang-lto++ cmake ..
+make
+
+cd .. && mkdir -p seeds && cd seeds
+for i in {0..4}; do
+    dd if=/dev/urandom of=seed_$i bs=64 count=10 2>/dev/null
+done
+
+cd ../build
+afl-fuzz -i ../seeds/ -o out -m none -d -- ./medium
 ```
 
-### WhiteBox
+**Success Criteria**:
 
-- Leverages heavyweight symbolic execution and static analysis, assuming full source availability
-- Pros
-  - Solves path constraints to get past difficult logic
-  - Capable of generating inputs for deep, hard‑to‑reach program states
-- Cons
-  - Complex
-  - Slow
-  - Not scalable
+- AFL++ compiles and installs without errors
+- Both fuzzing sessions start successfully
+- You can see the AFL++ status screen showing paths found, crashes, etc.
+- Check `out/crashes/` directory for any discovered crashes
 
-### Ensemble Fuzzing
+**Troubleshooting**:
 
-Ensemble fuzzing coordinates multiple heterogeneous fuzzers sharing a unified corpus, achieving better coverage than any single fuzzer.
+- If `afl-clang-fast` not found: Check `/usr/local/bin/` is in PATH
+- If compilation fails: Ensure LLVM 19 is properly installed (`clang-19 --version`)
+- If fuzzer doesn't start: Check CPU scaling governor (`echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor`)
 
-#### Concept
+### Real-World Impact: AFL++ Finding CVE-2024-47606 (GStreamer)
 
-- **Cross-Pollination:** Different fuzzers discover different code paths; sharing corpus maximizes coverage
-- **Complementary Strengths:** AFL++ excels at control flow; Honggfuzz at crash detection; libFuzzer at in-process fuzzing
-- **Coordinated Scheduling:** Use reinforcement learning or heuristics to select optimal fuzzer per input
+**Background**: AFL++ and similar fuzzers are actively used to find vulnerabilities in production software. Let's examine a real case from Week 1.
 
-#### Tools and Frameworks
+**Case Study - CVE-2024-47606 (GStreamer Signed-to-Unsigned Integer Underflow)**:
 
-- **EnFuzz:** Uses reinforcement learning to dynamically select which fuzzer runs on each input based on historical effectiveness
-- **CollAFL:** Lightweight synchronization protocol for parallel fuzzer coordination without central coordinator
-- **CUPID:** Analyzes feedback from all fuzzers to guide mutation strategies across the ensemble
+- **Discovery Method**: Continuous fuzzing campaigns by security researchers using AFL++ on media parsers
+- **The Bug**: GStreamer's `qtdemux_parse_theora_extension` had a signed integer underflow that became massive unsigned value
+- **Attack Surface**: MP4/MOV files processed automatically by browsers, media players, messaging apps
+- **Fuzzing Approach**:
+  1. Target: GStreamer's QuickTime demuxer (`qtdemux`)
+  2. Seed corpus: Valid MP4 files from public datasets
+  3. Instrumentation: Compiled with AFL++ and AddressSanitizer
+  4. Mutation strategy: Structure-aware (understanding MP4 atoms)
+  5. Result: Heap buffer overflow crash after ~48 hours of fuzzing
 
-#### Practical Setup
+**Why Fuzzing Found It**:
+
+- **Rare Input Combination**: Required specific Theora extension size values that underflow
+- **Static Analysis Limitation**: Signed-to-unsigned conversion buried in complex parsing logic
+- **Code Review Miss**: Integer arithmetic looked correct without considering negative values
+- **Automated Testing Gap**: Unit tests didn't cover malformed Theora extensions
+
+**The Discovery Process**:
 
 ```bash
-# Terminal 1: AFL++ primary with shared sync directory
-afl-fuzz -M fuzzer1 -i seeds -o sync_dir -- ./target @@
+# 1) Generate a structured MP4 seed corpus (GitHub Security Lab generator)
+cd ~/tuts && git clone --depth 1 https://github.com/github/securitylab.git
+cd ~/tuts/securitylab/Fuzzing/GStreamer
+make
+mkdir -p corpus/mp4
+./generator -o corpus/mp4
 
-# Terminal 2: Honggfuzz syncing to AFL corpus
-../honggfuzz/honggfuzz -i sync_dir/fuzzer1/queue -W sync_dir/hfuzz \
-  --linux_perf_ipt_block -t 10 -- ./target ___FILE___
+# 2) Build a vulnerable GStreamer (< 1.24.10) with AFL++ + ASan
+cd ~/tuts
+git clone --branch 1.24.9 --depth 1 https://gitlab.freedesktop.org/gstreamer/gstreamer.git
+cd gstreamer
+export CC=afl-clang-fast
+export CXX=afl-clang-fast++
+export CFLAGS="-O1 -g"
+export CXXFLAGS="-O1 -g"
+sudo apt-get install -y flex bison
+# NOTE: this might take a while so you can just build parts of it, not all
+meson setup build-afl --buildtype=debug -Db_sanitize=address
+ninja -C build-afl -j"$(nproc)"
 
-# Terminal 3: libFuzzer reading from both corpora
-./target_libfuzzer sync_dir/fuzzer1/queue sync_dir/hfuzz/queue \
-  -max_total_time=3600 -runs=1000000
+# 3) Fuzz the QuickTime demuxer pipeline with AFL++
+mkdir -p findings
+# NOTE: you can fuzz other binaries as well to find bugs
+echo core | sudo tee /proc/sys/kernel/core_pattern
+afl-fuzz -i ~/tuts/securitylab/Fuzzing/GStreamer/corpus/mp4 \
+         -o findings -m none -- \
+         ./build-afl/subprojects/gstreamer/tools/gst-launch-1.0 \
+         filesrc location=@@ ! qtdemux ! fakesink
 
-# Terminal 4: Sync monitor (optional)
-watch -n 60 'ls -lh sync_dir/*/queue | wc -l'
+# Typical outcome after hours of fuzzing:
+#   - ASan crash inside qtdemux_parse_theora_extension()
+#   - heap-buffer-overflow in gst_buffer_fill() when copying attacker-controlled data
+# Root cause (CVE-2024-47606 / GHSL-2024-166, fixed in 1.24.10):
+#   - 32-bit signed 'size' underflows → huge unsigned value
+#   - _sysmem_new_block() overflows when adding alignment/header → tiny (0x89-byte) allocation
+#   - memcpy() writes the huge size, corrupting GstMapInfo and allocator function pointers
 ```
 
-#### Best Practices
+**Key Insight**: Fuzzing excels at finding edge cases in complex parsers that humans would never manually test. The combination of:
 
-- **Start Simple:** Begin with AFL++ + Honggfuzz; add libFuzzer if you have source
-- **Corpus Deduplication:** Run `afl-cmin` periodically to minimize combined corpus
-- **Resource Allocation:** Allocate 40% AFL++, 30% Honggfuzz, 30% libFuzzer based on empirical results
-- **Monitoring:** Track unique crashes per fuzzer to identify which contributes most
+- Coverage-guided mutation (AFL++ exploring new code paths)
+- AddressSanitizer (detecting memory corruption immediately)
+- Persistent fuzzing (running for days/weeks)
 
-#### Performance Gains
+...makes it more effective than manual testing for this vulnerability class.
 
-- Research shows **15-40% more coverage** vs single fuzzer
-- **2-3× more unique crashes** in 24-hour runs
-- Particularly effective on complex parsers with multiple code paths
+### Key Takeaways
 
-## Components
+1. **Fuzzing finds real vulnerabilities**: Not just theoretical crashes, but exploitable bugs in production software
+2. **Coverage-guided fuzzing is powerful**: AFL++ intelligently explores code paths rather than random mutation
+3. **Sanitizers are essential**: ASAN, UBSAN turn subtle bugs into immediate crashes
+4. **Time matters**: Many bugs require hours/days of fuzzing to discover
+5. **Seed corpus quality affects results**: Starting with valid inputs helps reach deeper code paths
 
-### Power Scheduler
+### Discussion Questions
 
-- Responsible for distributing the amount of fuzzing time among the seeds in the seed queue
-- Prioritize more interesting seeds
-  - Usually measure by its ability to produce new code coverage
-- Assigns a scope to each seed and picks the one with highest score
-- Self‑learning schedulers such as _SieveFuzz_ and _RL‑Fuzz_ use reinforcement learning to allocate energy dynamically based on past mutation success.
-- Explore/Exploit auto‑tuning: AFL++ 4.30+ folds MOpt into the core and dynamically balances energy between seeds.
+1. Why did fuzzing find `CVE-2024-47606` when code review and unit testing didn't?
+2. What advantages does coverage-guided fuzzing have over purely random fuzzing?
+3. How do sanitizers (ASAN, UBSAN) enhance fuzzing effectiveness?
+4. What types of vulnerabilities are fuzzing best suited to find? What types does it miss?
+5. How can seed corpus selection impact fuzzing effectiveness?
 
-### Mutation
+## Day 2: Continue Fuzzing with `AFL++`
 
-- Responsible for making small changes to the fuzzing seed, with the goal of exercising new program behavior
-- Examples: bit-flips, addition/subtraction, deletion, etc
-- Typically operate by making small, incremental changes
-- LLM‑assisted mutations & harness scaffolding: Large‑language models can infer grammars/dictionaries (`--dict2`) and draft starter harness code (e.g., LibAFL's `llm_mutator`).
-- Overflow‑aware arithmetic heuristics: Enable `--arith8/16/32-smart` in AFL++ (or equivalents) to target boundary‑condition overflows.
-- AFLPlusPlus
-  - Deterministic: includes single deterministic mutations on the content of the test cases
-  - Havoc: mutations are randomly stacked and also includes changes to the size of the test case
-  - Note: honggfuzz and libFuzzer implement weighted random mutation stacks instead of the deterministic/havoc split
-- cmp_log guided mutations: Enable `-cmp_log` (AFL++) or `AFL_LLVM_CMPLOG=1` to perform Redqueen‑style input‑to‑state transforms.
-- Snapshot‑aware mutations: With Nyx mode (`NYX_MODE=1`) AFL++ randomises in‑memory state as well as file input for deep state machines.
-- LLM‑guided edits: _HyLLfuzz_ uses GPT/Llama‑3 to generate branch‑targeted mutations, achieving ≈ 1.3× edge coverage.
-
-### Directed Fuzzing (reach a specific bug/function)
-
-- AFLGo basics:
-  - Build with distance metrics to target BBs/functions, then run with exploration/exploitation phases
-  - Example:
-    ```bash
-    export AFLGO=/path/to/aflgo
-    cmake -DAFLGO=ON -DDISTANCE_CFG=BBtargets.txt ..
-    make clean all
-    afl-fuzz -z exp -c 45m -i seeds -o out -- ./target @@
-    ```
-- libAFL targeted stages: use objective feedbacks to push towards addresses/symbols of interest
-
-### Executor
-
-- Responsible for executing the program under test with mutated fuzzing seed in a performant manner
-- AFL++ uses a forkserver to skip the cost of expensive initialization and startup code
-- AFL++ also offers persistent fuzzing mode, where the essential code is run inside a loop without a need for fork
-- GPU‑accelerated execution loops are possible with _CUDA‑AFL_ and LibAFL's `VulkanExecutor`, ideal for shader or graphics targets.
-- Recent AFL++ versions ship a Nyx executor capable of high exec/s on user‑mode targets; activate with `NYX_MODE=1` (verify version and build flags).
-
-#### Persistent Mode Implementation
-
-**HF_ITER Style (Honggfuzz):**
-
-Honggfuzz offers HF_ITER-style persistent mode that's often easier to implement than ASAN-style for complex targets:
-
-```cpp
-#include "honggfuzz.h"
-
-int main(int argc, char** argv) {
-    // Expensive initialization (run once)
-    initialize_target();
-
-    // Persistent fuzzing loop
-    for (;;) {
-        size_t len;
-        uint8_t *buf;
-
-        // Get input from honggfuzz
-        HF_ITER(&buf, &len);
-
-        // Convert to target-appropriate format
-        FILE* input_stream = fmemopen(buf, len, "r");
-
-        // Execute target with fuzzed input
-        int result = target_function(input_stream);
-
-        // Cleanup for next iteration
-        fclose(input_stream);
-        reset_target_state();
-    }
-}
-```
-
-**Memory Management Considerations:**
-
-```cpp
-// Prevent memory leaks in persistent mode
-void reset_target_state() {
-    // Free any allocated memory
-    cleanup_buffers();
-
-    // Reset global state
-    memset(&global_state, 0, sizeof(global_state));
-
-    // Close any open file handles
-    close_handles();
-}
-```
-
-**ASAN-Style Alternative:**
-
-```cpp
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    // Direct fuzzing interface - no manual loop needed
-    return target_function(data, size);
-}
-```
-
-### Feedback
-
-- Set of program state information from running with a particular input seed
-- Fuzzers use feedback to determine fitness of a given seed(basic block coverage, edge coverage, path coverage)
-- AFLPlusPlus uses edge coverage (keeps a shared bitmap between the target and the fuzzer)
-- AFL++ uses edge coverage (keeps a shared bitmap between the target and the fuzzer)
-- Hardware trace sources such as Intel® Processor Trace (IPT) and ARM ETM/CoreSight provide near‑zero‑overhead edge coverage for large binaries.
-- LibAFL 0.15.2 can derive edge coverage from Last Branch Records, giving zero‑instrumentation tracing on recent Intel CPUs (`LBRFeedback`).
-
-#### Intel PT Coverage Setup
-
-**Honggfuzz with Intel PT:**
-
-Intel PT provides hardware-based coverage tracking ideal for binary-only targets where source instrumentation isn't possible:
+- **Goal**: Understand and apply advanced fuzzing techniques.
+- **Activities**:
+  - _Reading_: Continue with "Fuzzing for Software Security Testing and Quality Assurance" (From 3.3 to 3.9.8).
+  - _Real-World Examples_:
+    - [AFL++ finds CVE-2020-9385 in ZINT Barcode Generator](https://www.code-intelligence.com/blog/5-cves-found-with-feedback-based-fuzzing) - Stack buffer overflow discovered through fuzzing
+    - [AFL++ Fuzzing in Depth](https://aflplus.plus/docs/fuzzing_in_depth/) - How to effectively use afl++
+    - [Suricata IDS CVE-2019-16411](https://www.code-intelligence.com/blog/5-cves-found-with-feedback-based-fuzzing) - Out-of-bounds read found via fuzzing
+  - _Exercise_:
+    - Experiment with different `AFL++` options (for example, dictionary-based fuzzing, persistent mode).
+    - Running `AFL++` with a real-world application like a file format parser to mimic real-world scenarios.
+    - Optionally, target an image or media parser so you can practice finding heap overflows and out-of-bounds reads similar to the libWebP and GStreamer bugs from Week 1.
 
 ```bash
-# Basic Intel PT setup with honggfuzz
-../honggfuzz/honggfuzz -i input_corpus/ -W workspace/ --linux_perf_ipt_block -t 10 -- ./target @@
+# Fuzzing a image parser (dlib imglab)
+# NOTE: you can pull older versions to guarantee vulnerable code paths
+cd ~/tuts && git clone --depth 1 --branch v19.24.6 https://github.com/davisking/dlib.git
+cd dlib/tools/imglab && mkdir -p build && cd build
 
-# Performance tuning
-../honggfuzz/honggfuzz -i input_corpus/ -W workspace/ \
-  --linux_perf_ipt_block \
-  --linux_perf_ignore_unknown \
-  --threads 4 \
-  -t 30 -- ./target @@
+# Configure sanitizers for better crash detection
+export AFL_USE_UBSAN=1
+export AFL_USE_ASAN=1
+export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:allow_user_segv_handler=0:handle_abort=1:symbolize=0"
+
+# Install dependencies
+sudo apt install -y libx11-dev libavdevice-dev libavfilter-dev libavformat-dev libavcodec-dev \
+libswresample-dev libswscale-dev libavutil-dev libjxl-dev libjxl-tools
+
+# Compile with AFL++ and sanitizers
+cmake -DCMAKE_C_COMPILER=afl-clang-fast \
+      -DDLIB_NO_GUI_SUPPORT=0 \
+      -DCMAKE_CXX_COMPILER=afl-clang-fast++ \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address,leak,undefined -g" \
+      -DCMAKE_C_FLAGS="-fsanitize=address,leak,undefined -g" ..
+make -j$(nproc)
+
+# Prepare seed corpus
+mkdir -p fuzz/image/in
+cp ../../../examples/faces/testing.xml fuzz/image/in/
+
+# TODO: try to improve the fuzzing speed using https://aflplus.plus/docs/fuzzing_in_depth/#i-improve-the-speed
+# Run AFL++ in parallel mode (Master + Slave instances)
+# Terminal 1: Master instance
+echo core | sudo tee /proc/sys/kernel/core_pattern
+afl-fuzz -i fuzz/image/in -o fuzz/image/out -M Master -- ./imglab --stats @@
+
+# Terminal 2: Slave instance (for parallel fuzzing)
+afl-fuzz -i fuzz/image/in -o fuzz/image/out -S Slave1 -- ./imglab --stats @@
+
+# Install crash analysis tools
+sudo apt install -y gdb python3-pip valgrind
+wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py
+echo "source ~/.gdbinit-gef.py" >> ~/.gdbinit
+
+# Minimize a crashing input while preserving the crashing behavior (afl-tmin)
+# NOTE: there might be no crashes, either fuzz longer or go back to an older tag
+CRASH=$(ls ~/tuts/dlib/tools/imglab/build/fuzz/image/out/Master/crashes/id* 2>/dev/null | head -n1)
+afl-tmin -i "$CRASH" -o ~/tuts/dlib/tools/imglab/build/fuzz/image/out/Master/crashes/minimized_crash -- ./imglab --stats @@
+
+# Cluster and triage crashes with casr-afl (from CASR tools)
+# NOTE: there might be no crashes, either fuzz longer or go back to an older tag
+CASR_URL="https://github.com/ispras/casr/releases/latest/download/casr-x86_64-unknown-linux-gnu.tar.xz"
+INSTALL_DIR="$HOME/.local"
+mkdir -p "$INSTALL_DIR"
+wget -O "$INSTALL_DIR/casr-x86_64-unknown-linux-gnu.tar.xz" "$CASR_URL"
+tar -xJf "$INSTALL_DIR/casr-x86_64-unknown-linux-gnu.tar.xz" -C "$INSTALL_DIR"
+export PATH="$INSTALL_DIR/casr-x86_64-unknown-linux-gnu/bin:$PATH"  # provides casr-afl
+
+# Now run casr-afl on the AFL++ output directory
+casr-afl -i ~/tuts/dlib/tools/imglab/build/fuzz/image/out/Master -o ~/tuts/dlib/tools/imglab/build/fuzz/image/out/Master_casr_reports
 ```
 
-**Intel PT Requirements:**
+**Expected Outputs**:
 
-- Modern Intel CPU with PT support (check with `cat /proc/cpuinfo | grep intel_pt`)
-- Linux kernel with PT enabled (`CONFIG_INTEL_PT=y`)
-- Sufficient privileges or `CAP_SYS_ADMIN` capability
+- AFL++ status screen showing increasing coverage
+- Crashes appearing in `fuzz/image/out/Master/crashes/` or `fuzz/image/out/Slave1/crashes/`
+- AddressSanitizer reports for memory corruption bugs
 
-**Troubleshooting Intel PT:**
+**What to Look For**:
+
+- Crashes with `SIGSEGV` or `SIGABRT` signals
+- AddressSanitizer reports showing heap buffer overflows, use-after-free, etc.
+- Unique crash signatures (different stack traces)
+
+**Troubleshooting**:
+
+- If compilation fails: Check that all dependencies are installed
+- If no crashes found: Let fuzzer run longer (hours/days for real targets)
+- If crashes are false positives: Review ASAN options and adjust
+
+### Real-World Campaign: Fuzzing Image Parsers
+
+**Case Study - CVE-2023-4863 (libWebP Heap Buffer Overflow)**:
+
+From Week 1, you learned about this critical vulnerability. Let's understand how fuzzing could have (and did) discover similar bugs.
+
+- **The Target**: libWebP image decoder, used by Chrome, Firefox, and countless applications
+- **Why It's Fuzzing-Friendly**:
+  - Pure input-to-output: takes file bytes, produces image
+  - No network/filesystem dependencies
+  - Deterministic execution
+  - Complex parsing logic with many edge cases
+
+**Fuzzing Campaign Strategy**:
 
 ```bash
-# Check PT availability
-dmesg | grep -i "intel.*pt"
-cat /sys/devices/intel_pt/type
+# Real-world fuzzing setup for image parsers
+cd ~/tuts && git clone --depth 1 --branch 1.0.0 https://chromium.googlesource.com/webm/libwebp
 
-# Permission issues
-echo 'kernel.perf_event_paranoid = -1' >> /etc/sysctl.conf
-sysctl -p
+cd libwebp && sudo apt-get -y install gcc make autoconf automake libtool
 
-# Alternative: use capsh for specific capability
-capsh --caps="cap_sys_admin+eip" -- -c "./honggfuzz_command"
-```
+# Compile with AFL++ and all sanitizers
+export CC=afl-clang-fast
+export CXX=afl-clang-fast++
+export AFL_USE_ASAN=1
+export AFL_USE_UBSAN=1
+export CFLAGS="-fsanitize=address,undefined -g"
+export CXXFLAGS="-fsanitize=address,undefined -g"
 
-### Oracle
+./autogen.sh
+./configure
+make -j$(nproc)
 
-- Detects if any interesting behavior occurred during execution of the program under test with a given input
-- Code Sanitizers are special compile-time instrumentation for the program under test that perform run-time checks
-- AFL++ offers `QASAN` to run binaries that are not instrumented with `ASan` under QEMU with the AFL++ instrumentation
-- Different Bugs Require Different Oracles
-  - **No Source**: Statically rewrite the binary or `YOLO` it
-  - **Decoupled Sanitization**: use [SAND](https://github.com/SANDTeam/sand) to off-load sanitizer checks and speed up fuzzing
-  - **Memory Safety**: use Address or Leak or Memory Sanitizer (try HWASAN for lower memory usage); or use ARM's MTE for hardware‑assisted tagging on AArch64
-  - **Concurrency Issues**: use Thread Sanitizer – LLVM 18 adds detection for C++20 std::atomic_wait
-  - **Type Safety**: use Type Sanitizer
-  - **Undefined Behavior**: use `UBSan`
-  - **Heap Hardening**: Scudo Hardened Allocator (part of LLVM's compiler-rt, available in recent Clang versions) detects overflows and double‑frees with minimal performance cost.
-  - **Kernel Undefined Behavior**: Kernel UBSan (KUBSan) — enable with `CONFIG_UBSAN_TRAP=y` (verify availability in your kernel).
-  - **Control‑Flow Integrity**: **KCFI** (Clang 18) adds low-overhead forward-edge CFI; enable with `-fsanitize=kcfi`.
-  - **Data‑Flow**: Data‑Flow Sanitizer v2 adds taint‑tracking (`-fsanitize=dataflow`) and now works with libFuzzer.
-  - **Security‑property oracles**: Idempotency or differential fuzzing for APIs (e.g., _DiffSink_ for compiler targets).
-  - **Kernel Stuff**: use `KASAN`, `KMSAN`, `KCSAN`
-  - **Logic Bugs**: Differential or Property(Correctness-Idempotency) Oracles
+# Create fuzzing harness
+cat > fuzz_webp.c << 'EOF'
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <webp/decode.h>
+#include <webp/types.h>
 
-#### Property/Differential Oracles (quick patterns)
+int main(int argc, char **argv) {
+    if (argc < 2) return 1;
 
-- Idempotency: `f(x) == f(f(x))` for normalizations/parsers
-- Differential: compare two implementations or two versions, bucket on output mismatch
-- Invariants: monotonic lengths, checksum equality, schema validation post‑parse
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) return 1;
 
-## Seed Corpus
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-### What is a Seed Corpus?
+    uint8_t *data = malloc(size);
+    fread(data, 1, size, f);
+    fclose(f);
 
-Seed corpus is a collection of input files used as a starting point for fuzzing. In mutational fuzzing, the fuzzer takes existing files and makes random mutations (flipping, reordering, removing, inserting data) before having the target application parse the mutated file.
+    // Fuzz target: decode WebP image
+    int width, height;
+    uint8_t *output = WebPDecodeRGBA(data, size, &width, &height);
 
-### Why is a Seed Corpus Important?
-
-- Increases code coverage, which correlates strongly with finding crashes
-- Allows fuzzers to start close to "interesting" points in the target application
-- Helps overcome "unsolvable cliffs" in code coverage that fuzzers might struggle with
-- Research shows fuzzers perform significantly better when bootstrapped with a minimized corpus
-
-### Creating a Seed Corpus
-
-1. **Manual Creation**
-   - Create files with different command-line tools or GUI applications
-   - Use all possible tools for your file format to generate diverse outputs
-   - Automate where possible, but can be time-consuming
-
-2. **Existing Test Suites and Bug Reports**
-   - Leverage test suites from the target application
-   - Extract test cases from bug reports (high signal value)
-
-3. **Web Crawling**
-   - Use Common Crawl or similar datasets to extract relevant file types
-   - Filter based on MIME types
-   - Perform corpus distillation: keep only files that trigger new code paths
-
-### Corpus Distillation Process
-
-1. Iterate through each potential seed file
-2. Check file size (smaller files generally more efficient for fuzzing)
-3. Run the file with code coverage instrumentation
-4. Record if the file triggers any new code coverage not seen before
-5. Keep only files that increase code coverage
-6. Perform final minimum-set cover minimization for the smallest possible corpus
-
-### Tools for Corpus Creation
-
-- [common-corpus](https://github.com/benhawkes/common-corpus): Tool to build fuzzing corpus from Common Crawl data
-- [AFL's afl-cmin](https://github.com/AFLplusplus/AFLplusplus/blob/stable/afl-cmin): Corpus minimization tool
-- [AFL's afl-tmin](https://github.com/AFLplusplus/AFLplusplus/blob/stable/afl-tmin): Test case minimizer
-- [cf‑min](https://github.com/AFLplusplus/afl-cmin) – distributed/cluster‑friendly corpus minimizer
-- Crash‑Repro‑Recorder (CRR) bundles – store the exact sequence of inputs needed to reproduce a crash deterministically
-
-### Crash Triage Pipeline
-
-```bash
-# 1) Minimize
-afl-tmin -i crash -o crash.min -- ./target @@
-# 2) Symbolize/Log
-ASAN_OPTIONS=abort_on_error=1:symbolize=1 ./target crash.min 2>asan.log
-# 3) Coverage Hash
-./cov-tool --bbids ./target crash.min > cov.hash
-# 4) Bucket
-./bucket.py --key "$(cat cov.hash)" --log asan.log --out triage/
-```
-
-#### Cross‑platform crash analysis quick cheatsheets (user‑mode)
-
-- Linux
-  - Enable coredumps and replay:
-    ```bash
-    ulimit -c unlimited
-    sysctl -w kernel.core_pattern=core.%e.%p
-    ./target crash.min   # produces core
-    gdb -q ./target core.* -ex 'set pagination off' -ex bt -ex 'info reg' -ex q
-    addr2line -e ./target 0xDEADBEAF
-    ```
-  - Stabilize runs: `taskset -c 0 chrt -f 99 ./target @@`; set `ASAN_OPTIONS=allocator_may_return_null=1:handle_abort=1`.
-
-- Windows
-  - Local dumps (WER):
-    ```powershell
-    New-Item 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps' -Force | Out-Null
-    New-ItemProperty -Path 'HKLM:\...\LocalDumps' -Name DumpType -Type DWord -Value 2 -Force | Out-Null
-    ```
-  - PageHeap (user mode):
-    ```cmd
-    gflags /p /enable target.exe /full
-    ```
-  - WinDbg basics:
-    ```text
-    .symfix; .reload /f
-    !analyze -v
-    k; r; lm
-    ```
-  - Optional: record Time‑Travel Debugging (TTD) to replay non‑deterministic crashes.
-
-- macOS
-  - `lldb -o 'bt all' -- ./target crash.min`; set `DEVELOPER_DIR` to Xcode for symbols.
-
-#### Kernel crash triage quicksheet
-
-- Linux
-  - KASAN/KMSAN logs: `dmesg -T | egrep -i 'kasan|kmsan' -A 60`
-  - Decode stacks:
-    ```bash
-    ./scripts/decode_stacktrace.sh vmlinux /lib/modules/$(uname -r)/build < dmesg.log
-    ```
-  - Map addresses: `addr2line -e vmlinux 0xffffffff81234567`
-
-- Windows
-  - Driver Verifier:
-    ```cmd
-    verifier /standard /driver yourdrv.sys
-    ```
-  - KD/WinDbg:
-    ```text
-    !analyze -v; kv; r; !verifier 3; !irpfind
-    ```
-
-#### Sanitizer options (quick reference)
-
-- ASAN_OPTIONS: `abort_on_error=1:symbolize=1:allocator_may_return_null=1:detect_stack_use_after_return=1`
-- UBSAN_OPTIONS: `print_stacktrace=1:halt_on_error=1`
-- TSAN_OPTIONS: `halt_on_error=1:history_size=7:second_deadlock_stack=1`
-- MSAN_OPTIONS: `poison_in_dtor=1:track_origins=2`
-- HWASAN (AArch64): `abort_on_error=1:stack_history_size=7`
-
-#### syzkaller crash repro and bisection (essentials)
-
-```bash
-# Reproduce from syz repro
-syz-execprog -repeat=0 -procs=1 -wait=5m -cover=0 -debug target.repro
-
-# Run minimized C reproducer under KASAN/KCFI build for clarity
-make -j$(nproc) CONFIG_KASAN=y CONFIG_UBSAN=y CONFIG_KCFI=y
-
-# Git bisection (when you have a fix commit)
-git bisect start <bad> <good>
-git bisect run ./repro.sh
-```
-
-## Workflow
-
-```mermaid
-flowchart TD
-    A[Research Program Under Test] --> B[Choose Analysis Techniques];
-    B --> C[Initial Fuzzer Setup];
-    subgraph "Setup Details"
-        C --> C1[Gather Initial Seed Corpus];
-        C --> C2[Instrument Target];
-        C --> C3[Configure Execution];
-        C --> C4[Select Fuzzing Parameters];
-    end
-    C --> D[Begin Fuzzing];
-    D --> E{Monitor Fuzzing Progress};
-    E -- Stalled? --> F[Troubleshoot/Adjust];
-    F --> D;
-    E -- Crashes Found? --> G[Process Fuzzing Results];
-    subgraph "Result Processing"
-        G --> G1[Triage Crashes];
-        G --> G2[Deduplicate Test Cases];
-        G --> G3[Minimize Test Cases];
-    end
-    G --> H[Report Vulnerabilities / Refine];
-    H --> I[End];
-    E -- No Crashes/Finished --> I;
-
-    classDef setup fill:#99e,stroke:#111,stroke-width:2px,color:#333;
-    class C1,C2,C3,C4 setup;
-    classDef process fill:#e6e,stroke:#111,stroke-width:2px,color:#333;
-    class G1,G2,G3 process;
-```
-
-### Research the Program Under Test
-
-- Familiarize yourself with the program under test
-- Learn what the program under test does and how it operates
-- Interact with the program & learn how to use it
-- Identify inputs & outputs
-- Identify program areas to focus analysis efforts on Looking for
-  - Potentially Vulnerable program code
-  - Previously patched code
-  - Previous vulnerabilities
-  - Newly developed code
-  - Complex logic
-  - Input data ingestion sites
-- For kernel modules, look beyond traditional attack vectors:
-  - Beyond IOCTL handlers and `copy_from_user` calls
-  - Specialized subsystems like DMA-BUF may have attack surface through:
-    - Custom callbacks in operation structures
-    - Memory mapping handlers
-    - Page fault handlers
-    - VM operation structures
-    - Allocation/free mechanisms
-  - Identify all user-controlled inputs, especially those passed to functions that don't use `copy_from_user`
-
-### Choose the Right Set of Program Analyses
-
-- Types of analyses that you select to conduct depends on a variety of factors
-  - Size
-  - Format
-  - Interface
-  - Complexity
-
-### Initial Fuzzer Setup
-
-- Construct a representative initial seed corpus by gathering a set of program inputs that resemble the input format program expects
-- Instrument the program under test with coverage and sanitization
-- Recommended build flags (Clang/LLVM):
-
-  ```bash
-  # LibFuzzer + ASan/UBSan (C/C++)
-  CC=clang CXX=clang++ CFLAGS="-O1 -g -fno-omit-frame-pointer" \
-  CXXFLAGS="-O1 -g -fno-omit-frame-pointer" \
-  LDFLAGS="" \
-  cmake -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fsanitize-recover=undefined" \
-        -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer,address,undefined -fsanitize-recover=undefined" ..
-
-  # MSVC (Windows) AddressSanitizer for x64
-  # In Visual Studio 2022+: Project Properties → C/C++ → Address Sanitizer: Yes (/fsanitize=address)
-  # Runtime options
-  set ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1
-  ```
-
-- Execution method with Harness or command line arguments
-- Select fuzzing parameters like power schedule, dictionary, custom mutator, etc
-- Fuzzing setup to run in parallel, etc
-
-### Quick‑Start Recipes
-
-- LibFuzzer harness (C++):
-
-  ```cpp
-  #include <cstdint>
-  #include <cstddef>
-  extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-    /* parse_or_process(data, size); */
+    if (output) free(output);
+    free(data);
     return 0;
-  }
-  ```
-
-- AFL++ on a CLI target:
-
-  ```bash
-  # Instrument
-  CC=afl-clang-fast CXX=afl-clang-fast++ cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
-  # Seed dir with a few minimal valid inputs
-  afl-fuzz -i seeds -o findings -- ./target @@
-  # Useful extras: dictionary and cmplog for hard compares
-  afl-fuzz -i seeds -x dict.txt -o findings -c 0 -- ./target @@
-  # Or enable cmplog build/runner pair
-  AFL_LLVM_CMPLOG=1 CC=afl-clang-fast CXX=afl-clang-fast++ make clean all
-  afl-fuzz -i seeds -o findings -M f1 -- ./target @@
-  afl-fuzz -i seeds -o findings -S s1 -c 0 -- ./target @@
-  ```
-
-- Windows binary‑only (QEMU mode):
-
-  ```bash
-  afl-fuzz -Q -i seeds -o findings -- target.exe @@
-  ```
-
-### Begin Fuzzing
-
-- Start the actual fuzzing process and wait for any crashes
-- Fuzzing might get stalled, become unstable or have poor performance
-
-### Process the Fuzzing Results
-
-- Once the fuzzer produces a set of interesting test cases, we need to refine them
-- Triage
-  - Group test cases by root cause and/or vulnerability type
-  - Prioritize patching the more sever vulnerabilities
-- Deduplication: Remove all non-unique test cases
-- Minimization: get rid of unnecessary bytes of input
-
-#### Crash dedup & triage tips
-
-- Prefer stack‑hash or coverage‑hash based bucketing (e.g., AFLTriage, Crash Triage scripts).
-- Minimize before debugging: `afl-tmin`, `llvm-reduce`, or `creduce` for textual formats.
-- Use stable environments: pin CPU governor, disable ASLR where safe, fix random seeds.
-- Export sanitizer logs to files for CI artifacts.
-
-#### Reproducibility quick checklist
-
-- Save and replay exact input sequences in persistent mode
-- Pin CPU governor; fix RNG seeds; disable ASLR only where safe and necessary
-- Minimize before debugging (`afl-tmin`, `llvm-reduce`, `creduce`)
-- Record binary hashes and sanitizer options with every crash
-
-## Obstacles
-
-### Binary Only vs Source Fuzzing
-
-- Sometimes only executables are available, without any source code
-- Solution
-  - **Binary Rewriting**: inserting coverage and sanitization into a binary without recompilation (e.g., `retrowrite`, binary‑only ASan/QASan)
-  - **Dynamic Binary Instrumentation**: inserting coverage and sanitization at runtime (e.g., `QASAN`, DynamoRIO, Frida/QBDI)
-
-### Fuzzing Harness
-
-- Some fuzzing targets are difficult to interact with
-- Solution
-  - Fuzzing harness acts as a middleware between the program under test and the fuzzer
-  - Can also use function hooking to replace network or file function calls
-
-#### Library Harness Best Practices
-
-- **Research Existing Work**: Search for existing harnesses or test suites
-- **Optimize Compilation**: Use `-O1` or `-O3` flags during compilation
-- **Balance Coverage vs Speed**: A good harness maximizes code coverage while maintaining execution speed
-- **Strategic Targeting**: Create multiple small harnesses for different library components
-- **Resource Management**: Ensure proper initialization and cleanup of library resources
-- **Input Manipulation**: Create functions that transform fuzzer input into valid library parameters
-- **Persistent Mode**: For maximum efficiency, implement persistent mode harnesses that reuse library instances
-
-#### Snapshot Harnessing Tips
-
-- Snapshot after expensive initialization, right before the parse/dispatch loop
-- Map fuzzer input into in‑memory buffers; avoid filesystem and network overhead
-- Seed RNG and log it; ensure deterministic time sources where possible
-- Export coverage early and often (breakpoints or tracepoints) for plateau detection
-
-#### Structure‑aware fuzzing
-
-- Extract tokens/keywords to a dictionary (AFL++ `--dict2` or `AFL_TOKEN_FILE`).
-- Use libprotobuf‑mutator for protobuf/gRPC targets; generate corpus from `.proto` examples.
-- For HTTP/REST/GraphQL, record real traffic and convert to templates with placeholders.
-
-When building harnesses for libraries:
-
-1. Start with a basic implementation that validates core functionality
-2. Gradually expand to cover more API functions
-3. Use the documentation to understand parameter boundaries and edge cases
-4. Test with a variety of input encodings and configurations
-5. Consider structural awareness when fuzzing format-specific libraries
-
-Resources:
-
-- [Awesome LibFuzzer Harness Collection](https://github.com/google/fuzzing/tree/master/examples)
-- OSS-Fuzz project repositories
-
-### Fuzzer Stalls
-
-- Fuzzer progress has come to a halt
-- Solution
-  - Run a collection of different fuzzers
-  - Produce actionable coverage statistics with tools like VisFuzz or afl-cov that inform you of where the fuzzer is getting stuck
-  - Use a concolic fuzzer, which combines constraints solving with fuzzing to help traditional fuzzers get past difficult conditional statements
-  - If all else fails, move on to a different analysis technique
-  - For AFL++: enable `-c 0` (cmplog), try `AFL_MAP_SIZE=1048576`, use `-L 0` for MOpt, and add custom mutators.
-
-#### Plateau escape tactics
-
-- Switch to directed fuzzing (e.g., AFLGo/UAFuzz) for a specific function/basic block
-- Add grammar/dictionary; enable CMPLOG/Redqueen to unlock hard compares
-- Use concolic assistance (QSYM, Driller, libAFL concolic) on stubborn branches
-- Reduce target surface via snapshotting or split harness to increase exec/s
-
-### Fuzzing Reproducibility
-
-- Inability to reproduce crashing test cases produced by fuzzer
-- Solution
-  - During persistent fuzzing, save all inputs starting from when a new process is created and replay those inputs in same order to reproduce behavior
-  - AFLPlusPlus offers special compile-time instrumentation that attempts to eliminate concurrency issues
-
-### Speed & Performance
-
-- Fuzzer is running slowly
-- Solution
-  - Use snapshot fuzzing to eliminate execution of redundant, unimportant code
-  - Avoid using complex fuzzing logic
-  - Parallel fuzzing can sometimes help
-  - Pin CPU governor to performance; disable throttling; set `AFL_SKIP_CPUFREQ=1` when needed.
-  - Prefer `llvm_mode` over `qemu_mode` where possible; enable LTO instrumentation for higher throughput.
-
-## Techniques
-
-### Syzkaller
-
-- Limit enabled syscalls to make fuzzing go deeper
-- Write new `syzlang` descriptions
-- Change the mutation of fuzzing inputs(integrate symbolic execution)
-- Start fuzzing from the crafted corpus
-- Customize `kcov` or use cover filter for directed fuzzing
-- Extend grammar for better coverage
-- **External Network Fuzzing**:
-  - **Packet Injection**: Utilize `TUN/TAP` virtual network devices to inject network packets from within the VM, allowing the kernel to process them as if they were received externally. This approach is compatible with syzkaller's architecture, which runs the fuzzer process inside the VM.
-  - **Coverage Collection**: Employ `KCOV` to gather code coverage from the kernel's network packet parsing code. `KCOV` can be adapted to work with `TUN/TAP` to trace the execution paths taken during packet processing.
-  - **Pseudo-syscalls**: Implement `syzkaller` pseudo-syscalls to manage network-related operations, such as packet injection and resource management (e.g., `syz_emit_ethernet` for sending packets, `syz_extract_tcp_res` for handling TCP sequence and acknowledgement numbers).
-  - **Syscall Descriptions**: Create detailed `syzlang` descriptions for network protocols and packet structures to guide the fuzzer. This includes defining packet fields, checksums, and relationships between different protocol layers.
-  - **Integration Challenges**:
-    - **Checksums**: Implement logic to correctly calculate and update checksums for various protocols (IP, TCP, UDP, ICMP) as the fuzzer mutates packet data.
-    - **TCP Connections**: Develop sequences of syscalls and pseudo-syscalls to establish and manage TCP connections, enabling fuzzing of stateful TCP communication.
-    - **ARP Traffic**: Minimize or filter out ARP traffic to isolate the fuzzing of specific protocols and avoid interference.
-    - **IPv6 Support**: Extend descriptions and logic to support IPv6, including handling extension headers and specific IPv6 features.
-  - **Reading Code**: For understanding external network fuzzing implementation, refer to the original pull request in syzkaller and the current sources, focusing on `initialize_netdevices()`, `syz_emit_ethernet()`, and network protocol descriptions in `syzlang`.
-  - **Upstream docs** – See `docs/external_fuzzing_network.md` in the syzkaller repo for checksum helpers and packet templates.
-
-#### Target Selection
-
-- Use syzbot coverage heatmap to identify subsystems with less-than-ideal coverage
-- Look for subsystems with coverage between 1-20% (completely uncovered might have good reasons)
-- Network subsystems are easier to fuzz than hardware-dependent ones
-- Check syzbot dashboard to identify promising targets and current fuzzing status
-
-#### Attack Surface Analysis
-
-- Analyze kernel code to understand the attack surface (e.g., examining netlink handlers)
-- Map out the available operations (e.g., socket operations, netlink commands)
-- Understand the code paths that process user inputs for targeted fuzzing
-
-#### Performance Optimization
-
-- Use hardware virtualization when possible for better performance
-  - KVM on Linux, HVF on macOS can provide 3-5x speedup over TCG emulation
-- Adapt QEMU parameters to work with available accelerators
-
-#### Syzkaller Configuration and Setup
-
-- **Cross-Architecture Setup**:
-  - When configuring on non-standard hosts (e.g., ARM64 Mac), compile the target elements (kernel, rootfs) natively on Linux VM
-  - Go 1.23 fixes the internal linker, but you **still need `CROSS_COMPILE=`** when the kernel uses a non‑GNU tool‑chain.
-  - Specify OS/arch pairs when compiling: `make HOSTOS=darwin HOSTARCH=arm64 TARGETOS=linux TARGETARCH=arm64`
-  - Build `syz-executor` on a Linux machine and copy to your host if cross-compilation fails
-
-- **Kernel Module Fuzzing**:
-  - Extract constants with `syz-extract` targeting specific syscall descriptions: `bin/syz-extract -os linux -sourcedir /path/to/linux -arch arm64 -build module_name.txt`
-  - If extraction fails, manually compile programs to determine constant values
-  - Use the obtained values to create/fix `.const` files for your module
-
-- **Configuration File Example**:
-
-  ```json
-  {
-    "name": "QEMU-aarch64",
-    "target": "linux/arm64",
-    "http": ":56700",
-    "workdir": "/path/to/workdir",
-    "kernel_obj": "/path/to/kernel",
-    "syzkaller": "/path/to/syzkaller",
-    "image": "/path/to/rootfs.ext3",
-    "sshkey": "/path/to/id_rsa",
-    "procs": 8,
-    "enable_syscalls": ["openat$module_name", "ioctl$IOCTL_CMD", "mmap"],
-    "type": "qemu",
-    "vm": {
-      "count": 4,
-      "qemu": "/path/to/qemu-system-aarch64",
-      "cmdline": "console=ttyAMA0 root=/dev/vda",
-      "kernel": "/path/to/Image",
-      "cpu": 2,
-      "mem": 2048
-    }
-  }
-  ```
-
-#### Kernel fuzzing practicalities
-
-- Use `KCFI` and `KASAN` builds for safer fuzzing; `CONFIG_DEBUG_INFO_BTF=y` helps symbolization.
-- Prefer TUN/TAP packet injection over raw sockets for stable replay.
-- Stabilize coverage with `kcov` filters and `syz_cover_filter`.
-
-- **Performance Considerations**:
-  - For ARM64 Macs, thermal throttling can significantly reduce execution rates
-  - Monitor execution rates for performance degradation
-  - VM acceleration and hardware features can improve performance
-  - Consider using Hardware Tag-Based KASAN for better performance vs. coverage tradeoff
-  - **Linux 6.8+ configs**
-  - Enable: `CONFIG_KASAN=y` (or HWASAN on AArch64), `CONFIG_KCSAN=y`, `CONFIG_UBSAN=y`, `CONFIG_KCFI=y`, `CONFIG_DEBUG_INFO_BTF=y`.
-  - Prefer `CONFIG_KFENCE=n` during fuzzing; enable later to confirm bugs.
-
-### AFL
-
-- Crafting high quality harness
-  - identify existing harnesses [oss-fuzz](https://github.com/google/oss-fuzz)
-  - adapt and enhance for your fuzzing objectives
-- Corpus
-  - use `afl-tmin` and `afl-cmin` to tune corpus dynamically
-- Code Coverage
-  - use `afl-cov` to understand the code coverage
-  - then analyze and fine tune your harness
-  - and optimize your test corpus based on coverage feedback
-- Efficient Crash Triage
-  - use [AFLTriage](https://github.com/quic/AFLTriage) and [AddressSanitizer](https://github.com/google/sanitizers/wiki/addresssanitizer)
-  - try `afl-collect` / `afl-plot` and enable `ASAN_OPTIONS=abort_on_error=1:symbolize=1`
-
-#### Modern AFL++ tips
-
-- Use `-M`/`-S` for parallel fuzzer instances; combine `-c 0` (cmplog) on some slaves.
-- Persistent mode (`__AFL_LOOP(N)`) for hot loops; in‑process fuzzing with `afl++-unicorn` for emulated targets.
-- Dictionaries (`-x`) and `laf-intel`/`split-switches` to simplify hard conditions at compile time.
-
-### MacOS
-
-#### IPC Fuzzing
-
-- We can mutate and fuzz the message that `mach_msg` is sending
-  - Simple to do but slow
-  - Hard to determine which process caused the crash
-  - Hard to identify code coverage
-- We can directly send a message to Target message handler(skipping kernel)
-  - Very fast and easy to instrument
-  - Easy to understand what caused the crash
-  - but Different from end exploit, might need to invoke initialization routines
-- Write a Fuzzing harness
-
-```c
-void *lib_handle = dlopen("libexample.dylib", RTLD_LAZY);
-pFunction = dlsym(lib_handle, "DesiredFunction");
-```
-
-### EDR
-
-#### EDR Attack Surface Overview
-
-EDR solutions present a significant attack surface due to their complex architecture:
-
-**Potential vulnerability categories:**
-
-- Memory corruptions in file scanning & emulation (e.g., CVE-2021-1647)
-- Arbitrary file deletion via symlink vulnerabilities
-- User-Mode IPC authorization issues or memory corruptions
-- User-to-driver authorization bypass
-- Classic driver vulnerabilities (WDM, KMDF, Mini-Filter)
-- Server-to-agent authentication flaws
-- Parsing bugs in server responses
-- Classic Windows application vulnerabilities (DLL hijacking, file permissions)
-- Emulation/sandbox escapes
-- Logic bugs in security implementations
-
-#### Microsoft Defender's Scanning Engine (mpengine.dll)
-
-Microsoft Defender includes a local analysis engine `mpengine.dll` that performs static checks and uses emulation environments for different file types. This engine presents a significant attack surface due to its complexity and the variety of file formats it processes.
-
-**Target Characteristics:**
-
-- Installed by default on Windows systems
-- Runs as SYSTEM with high privileges
-- Has 1-click remote attack surface through file scanning
-- Processes numerous file formats with complex parsing logic
-- Prone to memory corruption vulnerabilities
-
-**Fuzzing Methodology:**
-
-_Snapshot Fuzzing with WTF:_
-
-- Uses Windows Terminal Framework for coverage-guided fuzzing
-- Takes snapshots after Defender initiates file scanning
-- Maintains identical configuration to real environment
-- Avoids limitations of manual engine bootstrapping
-
-_Alternative Approaches:_
-
-- **kAFL/NYX**: Additional fuzzing frameworks tested
-- **Jackalope**: Cross-platform coverage-guided fuzzer
-- **Manual harness**: Historic approach using `RSIG_BOOTENGINE` and `RSIG_SCAN_STREAMBUFFER`
-
-**Practical Attack Scenarios:**
-
-_Web-based DoS:_
-
-```html
-<!-- Crash Defender via malicious file download -->
-<a href="crash.pdf">Download PDF</a>
-<!-- Crashes MsMpEng.exe when file is scanned -->
-```
-
-_Network Share DoS:_
-
-```powershell
-# Upload crash file to SMB share before credential dumping
-copy crash.doc \\target\share\
-# Defender crashes when scanning uploaded file
-mimikatz.exe privilege::debug sekurlsa::logonpasswords
-```
-
-**Fuzzing Setup Requirements:**
-
-_Snapshot Creation:_
-
-```cpp
-// Example WTF harness setup
-if (!g_Backend->SetBreakpoint("nt!KeBugCheck2", [](Backend_t *Backend) {
-    const uint64_t BCode = Backend->GetArg(0);
-    const std::string Filename = fmt::format("crash-{:#x}", BCode);
-    Backend->Stop(Crash_t(Filename));
-}))
-```
-
-_Coverage Analysis:_
-
-- Use IDA Lighthouse for visualization
-- Monitor for DRIVER_VERIFIER_DETECTED_VIOLATION (0xc4)
-- Track IRQL_NOT_LESS_OR_EQUAL (0xa) crashes
-
-**Defense Implications:**
-
-- Demonstrates need for robust input validation
-- Shows importance of crash recovery mechanisms
-- Highlights risks of complex file parsing engines
-- Suggests value of sandboxing scanning processes
-
-##### Cross-platform mpengine.dll Fuzzing
-
-Recent advances enable fuzzing the latest Windows Defender engine (v1.1.25020.1007) on Linux using **loadlibrary** with Intel PT coverage:
-
-```cpp
-// Disable Lua VM to avoid stability issues
-void my_lua_exec(){
-  return;
 }
+EOF
 
-int main(int argc, char** argv){
-  // Hook luaV_execute to bypass Lua signature processing
-  insert_function_redirect((void*)luaV_execute_address, my_lua_exec, HOOK_REPLACE_FUNCTION);
+# Compile fuzzing harness
+afl-clang-fast -I./src -o fuzz_webp fuzz_webp.c \
+    -L./src/.libs -lwebp -fsanitize=address,undefined -g
 
-  // Setup persistent fuzzing loop
-  for (;;) {
-    size_t len;
-    uint8_t *buf;
-    HF_ITER(&buf, &len);
+# Collect seed corpus (valid WebP images)
+mkdir -p ~/tuts/libwebp/seeds
+# Download some WebP test images
+wget -q -O ~/tuts/libwebp/seeds/test1.webp https://www.gstatic.com/webp/gallery/1.webp
+wget -q -O ~/tuts/libwebp/O seeds/test2.webp https://www.gstatic.com/webp/gallery/2.webp
+wget -q -O ~/tuts/libwebp/O seeds/test3.webp https://www.gstatic.com/webp/gallery/3.webp
 
-    ScanDescriptor.UserPtr = fmemopen(buf, len, "r");
+# Run AFL++ fuzzer
+export LD_LIBRARY_PATH=./src/.libs:$LD_LIBRARY_PATH
+afl-fuzz -i seeds/ -o findings/ -m none -d -- ./fuzz_webp @@
 
-    if (__rsignal(&KernelHandle, RSIG_SCAN_STREAMBUFFER, &ScanParams, sizeof ScanParams) != 0) {
-      // Handle scan results
-    }
-  }
-}
+# Real campaigns run for weeks. OSS-Fuzz runs 24/7.
+# Expected: Crashes in findings/crashes/ directory
+# Analysis: ASAN reports showing heap buffer overflows
 ```
 
-##### Performance Optimizations
+**What Fuzzing Discovered**:
 
-- **Persistent Mode**: Eliminates initialization overhead, achieving hundreds of exec/s
-- **Intel PT Coverage**: Hardware-based tracing for binary-only targets
-- **Lua VM Bypassing**: Reduces crashes and focuses on native code vulnerabilities
+In the real CVE-2023-4863 case:
 
-##### honggfuzz with Intel PT Setup
+1. **Initial crash**: Heap buffer overflow in `BuildHuffmanTable()`
+2. **Root cause**: Malformed Huffman coding data caused out-of-bounds write
+3. **ASAN output**: Immediate detection of corruption with exact location
+4. **Exploitability**: Function pointer hijack possible via heap corruption
+
+**Why This Bug Survived Testing**:
+
+- **Unit tests**: Covered valid WebP files, not malformed Huffman tables
+- **Static analysis**: Complex pointer arithmetic hard to verify
+- **Code review**: Bounds check looked correct in isolation
+- **Fuzzing advantage**: Generated millions of mutated WebP files, including edge cases
+
+**Parallel Fuzzing for Speed**:
 
 ```bash
-# Non-persistent mode (slower, ~4s/execution)
-../honggfuzz/honggfuzz -i ~/input/ -W ~/workspace/ --linux_perf_ipt_block -t 10 -- ./mpclient_x64 ___FILE___
+# Real campaigns use multiple CPU cores
+# Master instance
+afl-fuzz -i seeds/ -o findings/ -M master -m none -- ./fuzz_webp @@
 
-# Persistent mode (faster, hundreds/sec)
-../honggfuzz/honggfuzz -i ~/input/ -W ~/workspace/ --linux_perf_ipt_block -t 10 -- ./mpclient_x64_persistent
+# Slave instances (in separate terminals or tmux)
+for i in {1..5}; do
+    afl-fuzz -i seeds/ -o findings/ -S slave$i -m none -- ./fuzz_webp @@ &
+done
+
+# Check status
+afl-whatsup findings/
+
+# Expected output:
+# Master: 1234 paths, 5 crashes
+# Slave1: 987 paths, 2 crashes
+# Slave2: 1056 paths, 3 crashes
+# ... (instances share corpus and findings)
 ```
 
-##### Common Issues and Solutions
+### Corpus Management and Seed Selection
 
-- **Cache Files**: Mock `mpcache-*` file access to return NULL handles for 2025+ engines
-- **Path Normalization**: Use absolute paths (e.g., `C:\input` vs `input`) to avoid Lua failures
-- **Floating Point Exceptions**: Often originate from .NET emulator, require debugging
-
-##### Lua VM Analysis and Bypassing
-
-_Understanding Defender's Lua Implementation:_
-
-Microsoft Defender uses Lua 5.1.5 for signature implementation, with native functions exposed through `MpCommon` and `mp` tables:
-
-```lua
--- Example signature logic that can fail
-local l_0_0 = ((MpCommon.PathToWin32Path)((mp.getfilename)(mp.FILEPATH_QUERY_FULL))):lower()
--- Calls native LsaMpCommonLib::PathToWin32Path() function
-```
-
-_Debugging Lua Execution:_
-
-```cpp
-// Hook luaV_execute main execution loop
-75a16bbdc 4c 8b f1        MOV        R14,RCX ; R14 := lua_state
-75a16bbdf 49 8b 46 28     MOV        RAX,qword ptr [R14 + 0x28]
-75a16bbe3 4d 8b 66 30     MOV        R12,qword ptr [R14 + 0x30] ; R12 := state->savedpc
-75a16bc07 41 8b 1c 24     MOV        EBX,dword ptr [R12] ; EBX := Lua instruction (4 bytes)
-
-// Common failure point in luaV_gettable()
-if ((lua_TValue *)callinfo[2] <= key_scalar_val) {
-    luaG_runerror(state,"attempt to %s a %s value","index",type_name);
-    // "attempt to index a nil value" - throws C++ exception
-}
-```
-
-_Signature Extraction and Analysis:_
-
-- Use **commial's scripts** to decompress .VDM signature files
-- **luadec** for full decompilation with restored headers
-- **LuaPytecode** for low-level bytecode analysis
+**Why Seed Quality Matters**:
 
 ```bash
-# Extract VDM contents and analyze bytecode
-python extract_vdm.py defender.vdm
-luadec extracted_bytecode.luac
+# Bad seed corpus: random bytes
+dd if=/dev/urandom of=bad_seed.webp bs=1024 count=10
+
+# Result: AFL++ spends time on invalid inputs that fail early parsing
+# Coverage: Only reaches format validation code
+
+# Good seed corpus: valid WebP files
+# Result: AFL++ mutates valid structure, reaches deep parsing logic
+# Coverage: Explores Huffman decoding, color space conversion, filters
 ```
 
-_Bypassing Strategy:_
-
-Replace Lua execution entirely to focus on native code vulnerabilities while maintaining unpacker functionality:
-
-```cpp
-// Complete Lua bypass - maintains unpacker execution
-void my_lua_exec(){
-    return; // Skip all signature processing
-}
-
-// Alternative: Selective bypassing for specific functions
-if (lua_function_name == "problematic_signature") {
-    return; // Skip only problematic signatures
-}
-```
-
-#### Fuzzing Scanning Engines
-
-**Setting Up WTF (WhatsApp Trace Framework) for EDR Fuzzing:**
-
-```cpp
-// Basic WTF harness for mpengine.dll fuzzing
-#include "wtf.h"
-
-// Crash handler for detecting vulnerabilities
-if (!g_Backend->SetBreakpoint("nt!KeBugCheck2", [](Backend_t *Backend) {
-    const uint64_t BugCode = Backend->GetArg(0);
-    const uint64_t Parameter1 = Backend->GetArg(1);
-
-    // Log crash details
-    const std::string Filename = fmt::format("crash-{:#x}-{:#x}", BugCode, Parameter1);
-    DebugPrint("Crash detected: {} (BugCode: {:#x})\n", Filename, BugCode);
-
-    Backend->Stop(Crash_t(Filename));
-})) {
-    DebugPrint("Failed to set crash breakpoint\n");
-    return false;
-}
-
-// Monitor specific crash types
-g_Backend->SetBreakpoint("nt!KeBugCheckEx", CrashHandler);
-```
-
-**Snapshot Positioning for Microsoft Defender:**
-
-```powershell
-# Trigger file scan via MpCmdRun.exe
-MpCmdRun.exe -Scan -ScanType 3 -File "C:\test\target.exe"
-
-# Alternative: Use Explorer context menu scan
-# Right-click -> "Scan with Microsoft Defender"
-
-# Monitor for scanning process start
-Get-Process | Where-Object {$_.ProcessName -eq "MsMpEng"}
-```
-
-**WTF Configuration Example:**
-
-```json
-{
-  "snapshot_path": "defender_scan.dmp",
-  "backend": "bochscpu",
-  "target": "mpengine.dll",
-  "max_iterations": 1000000,
-  "timeout": 30,
-  "coverage_breakpoints": [
-    "mpengine!UfsScannerWrapper::ScanFile",
-    "mpengine!pefile_scan_mp",
-    "mpengine!macho_scanfile"
-  ]
-}
-```
-
-**Alternative Fuzzing Frameworks:**
-
-_kAFL/NYX Setup:_
+**Building Effective Seed Corpus**:
 
 ```bash
-# Install kAFL dependencies
-git clone https://github.com/IntelLabs/kAFL.git
-cd kAFL
-./install.sh
+# 1. Collect diverse valid inputs
+mkdir -p corpus
+# - Different sizes (small, medium, large)
+# - Different features (lossy, lossless, animated)
+# - Different color spaces (RGB, YUV, alpha channel)
+wget -r -l1 -A webp https://www.gstatic.com/webp/gallery/ -P corpus/
 
-# Create fuzzing target
-python kafl_fuzz.py \
-    --memory 2048 \
-    --input corpus/ \
-    --work-dir workdir/ \
-    --seed-dir seeds/ \
-    --target targets/mpengine_target.py
+# 2. Minimize corpus (remove redundant files)
+afl-cmin -i corpus/ -o corpus_min/ -- ./fuzz_webp @@
+
+# 3. Minimize individual files (shrink while preserving coverage)
+mkdir -p corpus_tmin
+for f in corpus_min/*; do
+    afl-tmin -i "$f" -o "corpus_tmin/$(basename $f)" -- ./fuzz_webp @@
+done
+
+# Result: Smaller corpus = faster fuzzing iterations
+# Original: 50 files, 5MB total
+# Minimized: 15 files, 500KB total (same coverage)
 ```
 
-_Jackalope Configuration:_
+### Key Takeaways
 
-```python
-# Jackalope harness for EDR fuzzing
-import jackalope
+1. **Image parsers are prime fuzzing targets**: Complex, widely-deployed, handle untrusted input
+2. **OSS-Fuzz prevents 0-days**: Continuous fuzzing finds bugs before attackers
+3. **Parallel fuzzing scales linearly**: 8 cores = ~8x throughput
+4. **Corpus quality > corpus size**: Minimized, diverse seeds outperform large random corpus
+5. **Dictionaries accelerate discovery**: Format-aware tokens reach deeper code paths faster
 
-# Initialize fuzzer
-fuzzer = jackalope.TargetFuzzer(
-    target_binary="MpCmdRun.exe",
-    target_args=["-Scan", "-ScanType", "3", "-File", "@@"],
-    coverage_type="drcov",
-    target_timeout=30000
+### Discussion Questions
+
+1. Why are image/media parsers particularly well-suited for fuzzing compared to other software?
+2. How does corpus minimization improve fuzzing efficiency without losing coverage?
+3. What trade-offs exist between fuzzing speed (lightweight instrumentation) and bug detection (heavy sanitizers)?
+4. Why did OSS-Fuzz find bugs in libwebp that years of production use didn't reveal?
+5. How can you determine if a fuzzing campaign has reached diminishing returns and should target a different component?
+6. How can you [improve](https://aflplus.plus/docs/fuzzing_in_depth/#i-improve-the-speed) fuzzing speed?
+
+## Day 3: Introduction to Google FuzzTest
+
+- **Goal**: Understand in-process fuzzing with FuzzTest and how to turn unit tests into coverage-guided fuzzers that actually find memory corruption bugs.
+- **Activities**:
+  - _Reading_: Continue with "Fuzzing for Software Security Testing and Quality Assurance" (From 4.2.1 to 4.4).
+  - _Online Resources_:
+    - [Google FuzzTest](https://github.com/google/fuzztest) - Read the README and "Getting Started".
+    - [Property-based fuzzing vs example-based testing](https://github.com/google/fuzztest#what-is-fuzztest) - Short motivation for FuzzTest.
+  - _Exercises_:
+    1. Set up FuzzTest in a small CMake project and run a trivial property-based test.
+    2. Use FuzzTest + AddressSanitizer to rediscover a simple heap buffer overflow (Week 1 vulnerability class).
+    3. Extend the fuzz target to cover a small parser-style function, similar to the image/format parsers from Days 1–2.
+
+### Why FuzzTest in a vulnerability-focused course?
+
+FuzzTest is a **unit-test-style, in-process fuzzing framework** from Google that:
+
+- **Integrates with GoogleTest**: You write `TEST` and `FUZZ_TEST` side by side in the same file.
+- **Uses coverage-guided fuzzing under the hood** (libFuzzer-style) but hides boilerplate harness code.
+- **Works great for libraries and core logic** (parsers, decoders, crypto helpers) where you already have unit tests.
+- **Is ideal for CI**: The same binary can run fast deterministic tests or long-running fuzz campaigns depending on flags.
+
+Where AFL++/Honggfuzz are great for whole programs and black-box binaries, **FuzzTest shines when you have source code and want to fuzz individual C++ functions** directly.
+
+### Lab 1: Set up FuzzTest and run a basic property
+
+```bash
+mkdir -p ~/tuts/first_fuzz_project && cd ~/tuts/first_fuzz_project
+git clone --branch main --depth 1 https://github.com/google/fuzztest.git
+
+cat <<EOT > CMakeLists.txt
+# GoogleTest requires at least C++17
+set(CMAKE_CXX_STANDARD 17)
+
+add_subdirectory(fuzztest)
+
+enable_testing()
+
+include(GoogleTest)
+fuzztest_setup_fuzzing_flags()
+add_executable(
+  first_fuzz_test
+  first_fuzz_test.cc
 )
 
-# Add input corpus
-fuzzer.add_corpus_dir("corpus/")
+link_fuzztest(first_fuzz_test)
+gtest_discover_tests(first_fuzz_test)
+EOT
+cat <<EOT > first_fuzz_test.cc
+#include "fuzztest/fuzztest.h"
+#include "gtest/gtest.h"
 
-# Start fuzzing
-fuzzer.fuzz()
-```
-
-**Coverage Analysis Tools:**
-
-_IDA Lighthouse Integration:_
-
-```python
-# Load WTF traces in IDA with Lighthouse
-import lighthouse
-lighthouse.load_coverage_file("wtf_coverage.log")
-lighthouse.coverage.show_coverage()
-```
-
-_Dynamic Analysis with Tenet:_
-
-```python
-# Time-travel debugging with Tenet
-import tenet
-trace = tenet.load_trace("wtf_trace.log")
-trace.seek_to_address(0x7ffcdbb6e1e7)  # OOB read location
-```
-
-**File Format Corpus Building:**
-
-```powershell
-# Collect diverse file samples for fuzzing
-$formats = @("*.exe", "*.dll", "*.pdf", "*.docx", "*.xlsx", "*.js", "*.vbs")
-$corpus_dir = "C:\fuzzing\corpus\"
-
-foreach ($format in $formats) {
-    Get-ChildItem -Path "C:\Windows\System32" -Filter $format -Recurse |
-        ForEach-Object { Copy-Item $_.FullName "$corpus_dir\$($_.Name)" }
+TEST(MyTestSuite, OnePlusTwoIsTwoPlusOne) {
+  EXPECT_EQ(1 + 2, 2 + 1);
 }
 
-# Add malware samples (use VirusTotal/MWDB)
-# Add crafted samples with known vulnerabilities
-```
-
-**Debugging Crashes:**
-
-```windbg
-# WinDBG analysis of mpengine crashes
-.load wow64exts
-!analyze -v
-
-# Check for DRIVER_VERIFIER_DETECTED_VIOLATION (0xc4)
-!verifier
-
-# Examine call stack for OOB reads
-k
-!address @rax  # Check if address is valid
-
-# PageHeap analysis for heap corruption
-!heap -p -a @rax
-```
-
-#### Driver Interface Fuzzing
-
-**FilterConnectionPort Fuzzing:**
-
-```cpp
-// Sophos Intercept X port fuzzing example
-#include <windows.h>
-#include <fltuser.h>
-
-HANDLE hPort;
-HRESULT hr = FilterConnectCommunicationPort(
-    L"\\SophosPortName",
-    0,
-    NULL,
-    0,
-    NULL,
-    &hPort
-);
-
-if (SUCCEEDED(hr)) {
-    // Send malformed messages
-    BYTE fuzzData[1024];
-    DWORD bytesReturned;
-
-    for (int i = 0; i < 10000; i++) {
-        // Generate mutated data
-        GenerateFuzzData(fuzzData, sizeof(fuzzData));
-
-        FilterSendMessage(
-            hPort,
-            fuzzData,
-            sizeof(fuzzData),
-            NULL,
-            0,
-            &bytesReturned
-        );
-    }
+void IntegerAdditionCommutes(int a, int b) {
+  EXPECT_EQ(a + b, b + a);
 }
+FUZZ_TEST(MyTestSuite, IntegerAdditionCommutes);
+EOT
+mkdir -p build && cd build
+
+# configure with fuzztest
+cc=clang-19 cxx=clang++-19 cmake -dcmake_build_type=relwithdebug -dfuzztest_fuzzing_mode=on ..
+
+# Build the project
+cmake --build . --parallel $(nproc)
+
+# Run the fuzz test (short sanity run)
+./first_fuzz_test --fuzz=MyTestSuite.IntegerAdditionCommutes --max_total_time=10
 ```
 
-**IOCTL Fuzzing:**
+You should see FuzzTest/libFuzzer-style statistics (executions per second, coverage, etc.).
+For a correct property like integer commutativity, the fuzzer should **not** find crashes.
 
-```cpp
-// EDR device driver IOCTL fuzzing
-#include <winioctl.h>
+### Lab 2: FuzzTest to find a heap buffer overflow
 
-HANDLE hDevice = CreateFile(
-    L"\\\\.\\PaloEdrControlDevice",
-    GENERIC_READ | GENERIC_WRITE,
-    0,
-    NULL,
-    OPEN_EXISTING,
-    0,
-    NULL
-);
-
-if (hDevice != INVALID_HANDLE_VALUE) {
-    DWORD bytesReturned;
-    BYTE inputBuffer[4096];
-    BYTE outputBuffer[4096];
-
-    // Fuzz different IOCTL codes
-    DWORD ioctlCodes[] = {
-        0x2260D0, 0x2260D4, 0x2260D8, 0x2260DC,
-        // Add more discovered codes
-    };
-
-    for (DWORD ioctl : ioctlCodes) {
-        for (int i = 0; i < 1000; i++) {
-            GenerateFuzzData(inputBuffer, sizeof(inputBuffer));
-
-            DeviceIoControl(
-                hDevice,
-                ioctl,
-                inputBuffer,
-                sizeof(inputBuffer),
-                outputBuffer,
-                sizeof(outputBuffer),
-                &bytesReturned,
-                NULL
-            );
-        }
-    }
-}
-```
-
-#### Mini-Filter Communication Port Fuzzing
-
-**Snapshot fuzzing approach:**
-
-- Target FilterConnectionPorts with malformed messages
-- Use tools like WTF (WhatsApp Trace Framework) for coverage-guided fuzzing
-- Focus on message parsing logic in mini-filter drivers
-
-**WTF Snapshot Fuzzing Implementation:**
-
-```cpp
-// Example WTF harness for mini-filter fuzzing
-if (!g_Backend->SetBreakpoint("nt!KeBugCheck2", [](Backend_t *Backend) {
-    const uint64_t BCode = Backend->GetArg(0);
-    const uint64_t B0 = Backend->GetArg(1);
-    // Log crash details for analysis
-    const std::string Filename = fmt::format("crash-{:#x}-{:#x}", BCode, B0);
-    DebugPrint("KeBugCheck2: {}\n\n", Filename);
-    Backend->Stop(Crash_t(Filename));
-}))
-```
-
-**Fuzzing Setup Process:**
-
-1. **Snapshot Creation**: Create snapshot at FilterConnectionPort message handling entry point
-2. **Coverage Collection**: Use IDA Lighthouse to visualize code coverage from fuzzing
-3. **Crash Analysis**: Monitor for DRIVER_VERIFIER_DETECTED_VIOLATION (0xc4) and IRQL_NOT_LESS_OR_EQUAL (0xa) bug checks
-4. **False Positive Handling**: Address snapshot IRQL inconsistencies where CR8 register stores interrupted state rather than actual IRQL
-
-**Debugging Techniques:**
-
-- **Tenet Integration**: Load WTF traces in IDA for time-travel debugging capability
-- **ret-sync**: Synchronize WinDBG with IDA for live vs. snapshot execution comparison
-- **Memory Access Monitoring**: Use breakpoints on `nt!ProbeForRead`/`nt!ProbeForWrite` to track pointer validation
-
-### ETC
-
-### Rust Fuzzing & UB Hunting
-
-Rust's memory safety guarantees don't eliminate all bugs; `unsafe` blocks, FFI boundaries, and logic errors still need fuzzing.
-
-#### Complete Rust Fuzzing Stack
-
-**1. cargo-fuzz (libFuzzer integration)**
+Now turn FuzzTest onto a deliberately vulnerable function that mimics a classic **stack / heap buffer overflow** from Week 1.
 
 ```bash
-cargo install cargo-fuzz
-cargo fuzz init
-RUSTFLAGS="-Zsanitizer=address" RUSTC_BOOTSTRAP=1 cargo fuzz run fuzz_target_1
+cd ~/tuts/first_fuzz_project
 
-# With coverage tracking
-RUSTFLAGS="-Zsanitizer=address -C instrument-coverage" cargo fuzz coverage fuzz_target_1
-llvm-cov show target/coverage/debug/fuzz_target_1 \
-  -instr-profile=fuzz-coverage.profdata -format=html > coverage.html
+cat <<'EOT' > first_fuzz_test.cc
+#include <cstring>
+#include <string>
+#include "fuzztest/fuzztest.h"
+#include "gtest/gtest.h"
+
+TEST(ArithmeticSuite, OnePlusTwoIsTwoPlusOne) {
+  EXPECT_EQ(1 + 2, 2 + 1);
+}
+
+void IntegerAdditionCommutes(int a, int b) {
+  EXPECT_EQ(a + b, b + a);
+}
+FUZZ_TEST(ArithmeticSuite, IntegerAdditionCommutes);
+
+void VulnerableHeaderCopy(const std::string& input) {
+  char header[32];
+
+  // When input.size() > 32 and ASAN is enabled, this becomes a detectable overflow.
+  std::memcpy(header, input.data(), input.size());
+}
+
+FUZZ_TEST(OverflowSuite, VulnerableHeaderCopy);
+EOT
+
+cd build
+
+# Build the project
+cmake --build . --parallel $(nproc)
+
+# Run only the overflow fuzz test to focus on the bug
+./first_fuzz_test --fuzz=OverflowSuite.VulnerableHeaderCopy --max_total_time=20
 ```
 
-**2. cargo-careful (Nightly Bounds Checking)**
+**Expected result**: After a short time, FuzzTest should report a crash with an AddressSanitizer message similar to:
 
-Catches UB that Miri misses, particularly in `std` and runtime edge cases:
+```text
+==1066==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x76f8218731c0 at pc 0x60a5060193a2 bp 0x7ffc65c1fd10 sp 0x7ffc65c1f4d0
+```
+
+At this point you can:
+
+- Open `first_fuzz_test.cc` and **fix the bug** by adding a length check (for example, only copying up to `sizeof(header)`).
+- Rebuild and re-run the fuzz target to confirm the crash is gone.
+
+This is exactly the same pattern as our AFL++ labs: **fuzzer + sanitizer → crash → root cause → fix**, but now entirely inside a unit test binary.
+
+### Lab 3: Fuzzing a small parser-style function
+
+To connect FuzzTest to the real-world parsers from Days 1–2, fuzz a tiny length-prefixed parser that can easily go wrong if you mishandle integer arithmetic.
 
 ```bash
-cargo install cargo-careful
-cargo +nightly careful test
-cargo +nightly careful run --release
+cd ~/tuts/first_fuzz_project
 
-# Example: catches out-of-bounds that compile-time checks miss
-# unsafe { slice.get_unchecked(idx) } with runtime bounds violations
-```
+cat <<'EOT' >> first_fuzz_test.cc
 
-**3. Miri (Interpreter-Based UB Detection)**
-
-```bash
-cargo +nightly miri setup
-MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check" cargo +nightly miri test
-
-# Advanced: track specific allocations
-MIRIFLAGS="-Zmiri-track-alloc-id=1234" cargo +nightly miri test
-```
-
-**4. loom (Concurrency Bug Detection)**
-
-For testing lock-free data structures and concurrent code:
-
-```rust
-// Example loom test for concurrent queue
-#[cfg(loom)]
-#[test]
-fn test_concurrent_queue() {
-    loom::model(|| {
-        let queue = Arc::new(Queue::new());
-        let q1 = queue.clone();
-        let q2 = queue.clone();
-
-        let t1 = loom::thread::spawn(move || {
-            q1.push(1);
-        });
-
-        let t2 = loom::thread::spawn(move || {
-            q2.pop()
-        });
-
-        t1.join().unwrap();
-        t2.join().unwrap();
-    });
-}
-```
-
-```bash
-# Run loom tests
-RUSTFLAGS="--cfg loom" cargo test --release
-```
-
-**5. proptest (Property-Based Fuzzing)**
-
-Generate arbitrary inputs for property testing:
-
-```rust
-use proptest::prelude::*;
-
-proptest! {
-    #[test]
-    fn test_parser_doesnt_panic(s in "\\PC*") {
-        // Property: parser should never panic on any input
-        let _ = std::panic::catch_unwind(|| {
-            parse_input(&s)
-        });
-    }
-
-    #[test]
-    fn test_serialization_roundtrip(data: Vec<u8>) {
-        // Property: deserialize(serialize(x)) == x
-        let serialized = serialize(&data);
-        let deserialized = deserialize(&serialized).unwrap();
-        prop_assert_eq!(data, deserialized);
-    }
-}
-```
-
-#### Rust-Specific Vulnerability Classes
-
-**Unsafe Block Vulnerabilities:**
-
-```rust
-// Common patterns to fuzz:
-unsafe {
-    // 1. Vec::from_raw_parts with wrong capacity
-    Vec::from_raw_parts(ptr, len, wrong_capacity)
-
-    // 2. Unchecked indexing
-    slice.get_unchecked(oob_idx)
-
-    // 3. Transmute with size mismatch
-    std::mem::transmute::<SmallType, LargeType>(val)
-
-    // 4. Pointer arithmetic
-    ptr.offset(unchecked_offset)
-}
-```
-
-**FFI Boundary Bugs:**
-
-```rust
-// Fuzz C library calls
-#[no_mangle]
-pub extern "C" fn parse_external(data: *const u8, len: usize) {
-    unsafe {
-        // Size mismatch between Rust and C types
-        let c_struct: CStruct = libc_parse(data, len as c_int); // Truncation!
-    }
-}
-```
-
-#### Comprehensive Rust Fuzzing Workflow
-
-```bash
-# 1. Start with property tests (fast)
-cargo test
-
-# 2. Run Miri on test suite (catches UB)
-cargo +nightly miri test
-
-# 3. Add cargo-careful for runtime bounds checks
-cargo +nightly careful test
-
-# 4. Fuzz with cargo-fuzz (find crashes)
-cargo fuzz run fuzz_target_1 -- -max_total_time=3600
-
-# 5. Test concurrency with loom (if applicable)
-RUSTFLAGS="--cfg loom" cargo test --release
-
-# 6. Coverage analysis
-cargo fuzz coverage fuzz_target_1
-```
-
-#### Integration with LibAFL (Advanced)
-
-For Rust projects needing custom fuzzing logic:
-
-```rust
-use libafl::prelude::*;
-
-// Custom Rust fuzzer with LibAFL
-let mut harness = |input: &BytesInput| {
-    let data = input.bytes();
-    ExitKind::Ok
+struct Message {
+  uint8_t len;
+  std::string payload;
 };
 
-// Add custom mutators, feedback, etc.
+Message ParseMessage(const std::string& input) {
+  Message m{0, ""};
+  if (input.empty()) return m;
+
+  uint8_t len = static_cast<uint8_t>(input[0]);
+
+  // BUG -> commenting this would cause fuzzer to find vuln
+  // - If len > input.size() - 1, this will either truncate or read garbage.
+  // - Here we clamp len to avoid UB, but real code often forgets this check.
+  if (static_cast<size_t>(len) > input.size() - 1) {
+      len = static_cast<uint8_t>(input.size() - 1);
+  }
+
+  m.len = len;
+  m.payload.assign(input.data() + 1, input.data() + 1 + m.len);
+  return m;
+}
+
+void ParseDoesNotCrash(const std::string& input) {
+  (void)ParseMessage(input);
+}
+
+void LengthFieldRespected(const std::string& input) {
+  if (input.size() < 2) return;
+
+  uint8_t claimed_len = static_cast<uint8_t>(input[0]);
+  if (static_cast<size_t>(claimed_len) > input.size() - 1) return;
+
+  Message m = ParseMessage(input);
+  EXPECT_EQ(m.len, claimed_len);
+  EXPECT_EQ(m.payload.size(), claimed_len);
+}
+
+FUZZ_TEST(ParserSuite, ParseDoesNotCrash);
+FUZZ_TEST(ParserSuite, LengthFieldRespected);
+EOT
+
+cd build && cmake --build . --parallel $(nproc)
+
+# Run parser fuzz tests for a short time
+./first_fuzz_test --fuzz=ParserSuite.ParseDoesNotCrash --max_total_time=15
+./first_fuzz_test --fuzz=ParserSuite.LengthFieldRespected --max_total_time=15
 ```
 
-#### Snapshot Fuzzing
+**What to look for**:
 
-- Takes a snapshot of the target program/OS memory state and registers
-- Executes from snapshot in emulated environment, mutating memory data
-- Resets to original snapshot when execution crashes or reaches specified point
-- Advantages:
-  - Fast execution (skips program startup)
-  - Highly deterministic testing
-  - No source code required
-  - Easy tracking of code coverage and crashes
-- Disadvantages:
-  - Time-consuming setup process
-  - Requires specialized knowledge
-- Tools:
-  - wtf (what the fuzz) – Windows/Linux/macOS, supports > 4 GB snapshots
-  - Snapchange (AWS)
-  - Nyx v2 – integrates Intel® PT tracing and plugs into AFL++ (`NYX_MODE=1`), sustaining ~20 k exec/s on full VM targets.
+- If you intentionally break the length check inside `ParseMessage` (for example, remove the `if (len > input.size() - 1)` guard - 3 lines), FuzzTest + ASAN/UBSAN should quickly find crashes or undefined behavior.
+- Try modifying the parser to add more fields (flags, type bytes, nested length fields) and see how FuzzTest finds edge cases you did not think about.
 
-#### Embedded Systems Fuzzing
+### Key Takeaways
 
-- Targets firmware, IoT devices, and embedded software
-- Challenges:
-  - Architecture diversity (MIPS, ARM, etc.)
-  - Binary-only targets (no source access)
-  - Emulation requirements
-  - Limited or no sanitizer support
-- Tools:
-  - LibAFL (0.15.2) – Modular Rust framework; key features include Unicorn engine, snapshot module, StatsD monitoring, LBRFeedback, SAND (Decoupled Sanitization) support, and a Rust-based binary-only ASan for its updated QEMU (v9.2.2) backend.
-  - Qemu-based emulation
-  - Nautilus - Grammar-based fuzzing
+1. **FuzzTest brings fuzzing into your unit tests**: You can turn GoogleTest-style tests into coverage-guided fuzzers with `FUZZ_TEST`, using the same build system and test runner.
+2. **Sanitizers are critical**: Combining FuzzTest with ASAN/UBSAN turns memory bugs (overflows, UAFs, integer issues) into immediate, reproducible crashes.
+3. **Great fit for parsers and core logic**: Short, pure C++ functions (parsers, decoders, protocol handlers) are ideal FuzzTest targets, similar to the real-world parsers from Days 1–2.
+4. **Properties > examples**: Expressing invariants like “never crash” or “length field matches payload” lets the fuzzer explore inputs you would never hand-write.
+5. **Same workflow as other fuzzers**: Regardless of tool (AFL++, Honggfuzz, FuzzTest), the basic loop is still _fuzz → crash → triage → exploitability → fix_.
 
-#### Language Ecosystem Fuzzing
+### Discussion Questions
 
-- Go (1.18+): built‑in fuzzing via `go test -fuzz=Fuzz -run=^$ ./...` with `FuzzXxx(*testing.F, data []byte)` signatures.
-- Python: [Atheris](https://github.com/google/atheris) for native CPython fuzzing; integrates with `pytest` and OSS‑Fuzz.
-- Rust: `cargo-fuzz` (libFuzzer), or LibAFL for custom pipelines; coverage via `cargo llvm-cov`.
+1. In what situations would you prefer **FuzzTest** over a process-level fuzzer like **AFL++** or **Honggfuzz**, and why?
+2. How would you go about converting an existing **GoogleTest** regression test into an effective `FUZZ_TEST` that can find new bugs, not just regressions?
+3. Which vulnerability classes from Week 1 (e.g., buffer overflows, integer overflows, UAF) are especially well-suited to FuzzTest, and which are harder to reach with this style of in-process fuzzing?
+4. How could you integrate short, time-bounded FuzzTest runs into a **CI pipeline** without making builds too slow, while still having longer campaigns on dedicated fuzzing machines?
+5. When writing properties like `LengthFieldRespected`, what kinds of mistakes in the property itself might cause you to **miss real bugs** or report lots of false positives?
 
-#### CI/CD Fuzzing
+## Day 4: Introduction to `Honggfuzz`
 
-- Lightweight CI with ClusterFuzzLite or GitHub Actions matrix jobs; cache corpora between runs.
-- Example (GitHub Actions):
+- **Goal**: Understand different fuzzing methods and when to use Honggfuzz vs AFL++.
+- **Activities**:
+  - _Reading_: Continue with "Fuzzing for Software Security Testing and Quality Assurance" (From 5.1.2 to 5.3.7).
+  - _Online Resource_: [Honggfuzz](https://github.com/google/honggfuzz.git)
+  - _Real-World Context_:
+    - Honggfuzz is used in Google's continuous fuzzing infrastructure
+    - [OSS-Fuzz uses Honggfuzz for many projects](https://google.github.io/oss-fuzz/getting-started/new-project-guide/)
+    - OpenSSL has extensive fuzzing coverage - [see their fuzzing documentation](https://docs.openssl.org/3.2/man7/ossl-guide-introduction/)
+  - _Exercise_: Fuzz OpenSSL server and private key parsing
 
-  ```yaml
-  name: fuzz
-  on: [push, pull_request]
-  jobs:
-    afl:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - name: Build with afl-clang-fast
-          run: |
-            sudo apt-get update && sudo apt-get install -y clang llvm
-            make clean && CC=afl-clang-fast CXX=afl-clang-fast++ make -j
-        - name: Run AFL++ (short smoke)
-          run: |
-            mkdir -p seeds findings
-            echo "{}" > seeds/min.json
-            timeout 15m afl-fuzz -i seeds -o findings -- ./target @@ || true
-    libfuzzer:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - name: Build fuzz target
-          run: |
-            cmake -S . -B build -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer,address,undefined -O1 -g"
-            cmake --build build -j
-        - name: Run fuzz target (sanitizers)
-          run: timeout 15m ./build/my_fuzz_target -max_total_time=900 || true
-  ```
+```bash
+# Install Honggfuzz
+cd ~/soft && git clone --branch master --depth 1 https://github.com/google/honggfuzz.git
+#sudo apt-get install -y binutils-dev libunwind-dev libblocksruntime-dev clang libssl-dev
+sudo apt-get install -y binutils-dev libunwind-dev libblocksruntime-dev libssl-dev
+cd honggfuzz && make -j$(nproc) && sudo make install
 
-- Upload artifacts (crashes, logs) in CI for manual triage:
+# Verify installation
+which honggfuzz
+honggfuzz --version
 
-  ```yaml
-  - name: Upload crashes
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: crashes
-      path: |
-        findings/**/crashes/*
-        findings/**/hangs/*
-        **/*.log
-  ```
+# Clone OpenSSL source
+cd ~/tuts && git clone --branch openssl-3.1.2 --depth=1 https://github.com/openssl/openssl.git
+cd openssl
 
-#### OSS‑Fuzz onboarding (quick checklist)
+# Configure OpenSSL for fuzzing (with all legacy protocols enabled for broader attack surface)
+CC=/usr/local/bin/hfuzz-clang CXX="$CC"++ ./config \
+  -DPEDANTIC no-shared -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION -O0 \
+  -fno-sanitize=alignment -lm -ggdb -gdwarf-4 --debug -fno-omit-frame-pointer \
+  enable-asan enable-tls1_3 enable-weak-ssl-ciphers enable-rc5 enable-md2 \
+  enable-ssl3 enable-ssl3-method enable-nextprotoneg enable-heartbeats \
+  enable-aria enable-zlib enable-egd
 
-- Build system supports sanitizers and libFuzzer entrypoints
-- Minimal seed corpus in `seed_corpus/`
-- Reproducers saved on crash; asserts map to sanitizer failures
-- `project.yaml` configured with timeouts, fuzzers, and language
+# Build OpenSSL
+make -j$(nproc)
 
-#### LLM‑Guided Fuzzing
+# Build Honggfuzz fuzzers for OpenSSL
+# Note: This uses Honggfuzz's example OpenSSL fuzzers
+cat > build_fuzzers.sh << 'EOT'
+#!/bin/bash
+set -x
+set -e
+echo "Building honggfuzz fuzzers for OpenSSL"
+for x in x509 privkey client server; do
+    hfuzz-clang \
+        -DBORINGSSL_UNSAFE_DETERMINISTIC_MODE \
+        -DBORINGSSL_UNSAFE_FUZZER_MODE \
+        -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION \
+        -DBN_DEBUG \
+        -DLIBRESSL_HAS_TLS1_3 \
+        -O3 -g \
+        -DFuzzerInitialize=LLVMFuzzerInitialize \
+        -DFuzzerTestOneInput=LLVMFuzzerTestOneInput \
+        -I$(pwd)/include \
+        -I"$HOME"/soft/honggfuzz/examples/openssl \
+        -I"$HOME"/soft/honggfuzz \
+        -g "$HOME/soft/honggfuzz/examples/openssl/$x.c" \
+        -o "libfuzzer.openssl-memory.$x" \
+        ./libssl.a ./libcrypto.a -lpthread -lz -ldl -fsanitize=address
+done
+EOT
 
-- Use LLMs to propose input dictionaries, seed structures, and targeted mutations when coverage stalls.
-- Tools: ChatAFL/HyLLFuzz integrations; prompt with protocol docs or examples to generate grammar hints.
+chmod +x build_fuzzers.sh
+./build_fuzzers.sh
 
-#### Grammar-Based Fuzzing
+# Run Honggfuzz on OpenSSL server parser
+honggfuzz --input ~/soft/honggfuzz/examples/openssl/corpus_server/ \
+          -- ./libfuzzer.openssl-memory.server
 
-- Generates inputs according to a defined grammar/structure
-- Useful for highly-structured inputs where random mutations would be rejected
-- Hybrid approaches combine grammar with coverage feedback
-- Examples:
-  - Nautilus - Grammar mutational fuzzer
-  - AFLSmart - Smart greybox fuzzer with input awareness
-  - Tlspuffin - Protocol fuzzer for TLS
-
-#### Triaging and Analysis
-
-- Process for analyzing fuzzer-generated crashes
-- Techniques:
-  - Crash reproducibility - Using minimized test cases
-  - Crash minimization - Removing unnecessary input bytes
-  - Root cause analysis - Identifying the vulnerable code
-  - Backtrace reconstruction - Finding where the crash occurs
-  - Partial overwrites - Leaking memory addresses
-  - Memory pattern analysis - Identifying corruption patterns
-
-#### Extended Instrumentation
-
-- Extends coverage-guided fuzzing instrumentation to collect additional data beyond basic edge coverage
-- Benefits:
-  - Identifies vulnerable execution paths more efficiently
-  - Provides better feedback to guide the fuzzer toward interesting targets
-  - Can focus fuzzing on historically vulnerable code areas
-- Implementation techniques:
-  - Access program counter (PC) information during execution
-  - Track real-time stack traces to identify vulnerable functions
-  - Utilize return address information to trace execution paths
-  - Compare PC to specific address spaces of interest
-- Example application:
-  - Modifying Fuzzilli's instrumentation for JerryScript to extract useful data
-  - Using `__builtin_return_address(0)` to get current PC address
-  - Tracking stack traces to narrow down root causes of vulnerabilities
-- Potential improvements:
-  - Feed historical vulnerability data to guide future fuzzing
-  - Correlate "dangerous" files to their address space
-  - Direct fuzzer to focus on specific paths by prioritizing certain inputs
-
-#### eBPF & Kernel‑in‑Kernel Fuzzing
-
-- syzkaller's `executor_bpf` and verifier‑stress templates exercise the in‑kernel eBPF verifier and JIT paths.
-
-#### WebAssembly Runtime Fuzzing
-
-- Differential‑fuzz runtimes such as V8, Wasmer, and Wasmtime with tools like `wasmtime-fuzz` and `wafl`.
-
-#### Smart‑Contract Fuzzing
-
-- Use _Echidna_ and _Foundry‑fuzz_ for Solidity, or _Move‑Fuzz_ for Aptos/Sui; all integrate cleanly into CI pipelines.
-
-#### USB & Bluetooth Stack Fuzzing
-
-- Snapshot‑plus‑wire‑capture harnesses from _HydraUSBFuzz_ and _BT‑SnoopFuzz_ enable realistic peripheral fuzzing.
-
-#### DMA-BUF Subsystem Fuzzing
-
-- Target memory-sharing frameworks in the Linux kernel that don't use traditional `copy_from_user`
-- Focus on fuzzing:
-  - Custom implementations of `struct dma_buf_ops` callbacks
-  - Page fault handlers in VM operations structures
-  - DMA-BUF heap allocation operations
-  - Bounds checking in buffer access operations
-- Generate test cases that exercise:
-  - Memory mapping with different page offsets
-  - Buffer allocation with various sizes and flags
-  - Complex interaction patterns between different DMA-BUF operations
-- Use coverage-guided fuzzing with kernel instrumentation to identify execution paths in these subsystems
-
-#### AI/ML Model Fuzzing
-
-- Tools such as _DeepFuzz_ and _TextFuzzer_ measure neuron coverage and search for jailbreak or adversarial failures.
-
-#### Fuzzing Rust Crates
-
-- First‑class Rust support through `cargo‑fuzz`, `honggfuzz‑rs`, or LibAFL with Cargo feature flags.
-
-## Diagrams
-
-### Fuzzer Architecture
-
-```mermaid
-flowchart TB
-    Input["Input Generation/Mutation"]
-    Target["Target Program"]
-    Feedback["Feedback Mechanism"]
-    Crash["Crash Detection"]
-    Analysis["Crash Analysis"]
-
-    Input --> Target
-    Target --> Feedback
-    Feedback --> Input
-    Target --> Crash
-    Crash --> Analysis
-
-    subgraph Fuzzer
-        Input
-        Feedback
-    end
-
-    subgraph Target Environment
-        Target
-        Crash
-    end
-
-    subgraph Post-Processing
-        Analysis
-    end
+# Run Honggfuzz on OpenSSL private key parser
+honggfuzz --input ~/soft/honggfuzz/examples/openssl/corpus_privkey/ \
+          -- ./libfuzzer.openssl-memory.privkey
 ```
 
-### Coverage-Guided Fuzzing Process
+**Success Criteria**:
 
-```mermaid
-sequenceDiagram
-    participant F as Fuzzer
-    participant H as Harness
-    participant T as Target
-    participant C as Coverage Tracker
+- Honggfuzz compiles and installs successfully
+- OpenSSL builds with fuzzing support
+- Fuzzers compile without errors
+- Honggfuzz starts and shows coverage statistics
 
-    F->>F: Generate/Mutate Input
-    F->>H: Send Input
-    H->>T: Execute with Input
-    T->>C: Record Code Coverage
-    C->>F: Return Coverage Info
-    F->>F: Evaluate Coverage
-    F->>F: Add to Corpus if New Coverage
+**What to Look For**:
 
-    alt Crash Detected
-        T->>H: Crash Information
-        H->>F: Report Crash
-        F->>F: Save Crash Input
-    end
+- Coverage metrics increasing over time
+- Crashes in the working directory
+- Different crash types (heap overflow, use-after-free, etc.)
+
+**Note**: Real OpenSSL fuzzing often runs for days/weeks. For this exercise, run for at least 30 minutes to see initial results.
+
+### Real-World Impact: Honggfuzz Finding TLS Vulnerabilities
+
+**Case Study - Heartbleed-Class Bugs in TLS Implementations**:
+
+While Heartbleed (CVE-2014-0160) predates modern fuzzing tools, similar vulnerabilities continue to be found through continuous fuzzing campaigns.
+
+**Why TLS is Hard to Fuzz**:
+
+- **Stateful protocol**: Must complete handshake before reaching deep logic
+- **Cryptographic operations**: Random values, signatures, MACs
+- **Multiple versions**: TLS 1.0, 1.1, 1.2, 1.3 with different code paths
+- **Extensions**: ALPN, SNI, session tickets, early data, etc.
+
+**Honggfuzz Advantages for Network Protocols**:
+
+```bash
+# Example: Fuzzing TLS 1.3 handshake
+cat > fuzz_tls13_handshake.c << 'EOF'
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <stdint.h>
+#include <stddef.h>
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) return 0;
+
+    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+
+    BIO *in_bio = BIO_new(BIO_s_mem());
+    BIO *out_bio = BIO_new(BIO_s_mem());
+
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_bio(ssl, in_bio, out_bio);
+    SSL_set_accept_state(ssl);
+
+    BIO_write(in_bio, data, size);
+    SSL_do_handshake(ssl);
+
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    return 0;
+}
+EOF
+
+# Compile with Honggfuzz
+hfuzz-clang fuzz_tls13_handshake.c \
+    -I"$HOME"/tuts/openssl/include \
+    -L"$HOME"/tuts/openssl/lib \
+    -lssl -lcrypto \
+    -fsanitize=address,undefined \
+    -o fuzz_tls13
+
+# Run with Honggfuzz
+# TODO: use a better corpus to actually find the vulnerabilities in that code
+honggfuzz --input ~/soft/honggfuzz/examples/openssl/corpus_server/ \
+          --threads 8 \
+          --timeout 5 \
+          -- ./fuzz_tls13
 ```
 
-### Memory Error Detection Techniques
+**Real Bugs Found by Protocol Fuzzing**:
 
-```mermaid
-flowchart LR
-    M["Memory Errors"]
+From OpenSSL and other TLS implementations:
 
-    ASan["Address Sanitizer"]
-    MSan["Memory Sanitizer"]
-    PHeap["Page Heap"]
-    Valgrind["Valgrind"]
+- **Buffer overflows in certificate parsing**: X.509 extension handling
+- **Use-after-free in session resumption**: Ticket lifetime management
+- **Integer overflows in record layer**: Length calculations
+- **State confusion bugs**: Unexpected message ordering
 
-    M --> ASan
-    M --> MSan
-    M --> PHeap
-    M --> Valgrind
+**Example: CVE-2022-0778 (OpenSSL Infinite Loop)**:
 
-    subgraph "Error Types"
-        BOF["Buffer Overflow"]
-        UAF["Use-After-Free"]
-        UIR["Uninitialized Read"]
-    end
+```bash
+# Bug: Infinite loop in BN_mod_sqrt() when parsing elliptic curve points
+# Discovery: Fuzzing certificate parsing with malformed EC parameters
+# Impact: DoS via crafted certificate
+# Fixed: OpenSSL 3.0.2, 1.1.1n
 
-    ASan --> BOF
-    ASan --> UAF
-    MSan --> UIR
-    PHeap --> BOF
-    PHeap --> UAF
-    Valgrind --> BOF
-    Valgrind --> UAF
-    Valgrind --> UIR
+# Fuzzing campaign that found similar bugs:
+honggfuzz --input certs/ \
+          --dict openssl.dict \
+          --threads 16 \
+          --timeout 10 \
+          --rlimit_rss 2048 \
+          -- ./openssl x509 -in ___FILE___ -text
+
+# Result: Timeout on malformed EC point → DoS vulnerability
 ```
+
+**Fuzzing vs Real-World Exposure**:
+
+| Metric               | Production Use (10 years) | OSS-Fuzz (1 year) |
+| -------------------- | ------------------------- | ----------------- |
+| Total connections    | Billions                  | 0 (pure fuzzing)  |
+| Unique inputs tested | ~1,000 (typical sites)    | Trillions         |
+| Edge cases covered   | <1%                       | >90%              |
+| Bugs found           | ~5 (via exploits)         | ~50               |
+
+**Key Insight**: Fuzzing explores input space breadth that production traffic never reaches.
+
+### Key Takeaways
+
+1. **Honggfuzz excels at complex targets**: Multi-threaded, persistent mode, hardware-assisted coverage
+2. **Protocol fuzzing requires stateful harnesses**: Must reach deep code paths beyond initial parsing
+3. **Continuous fuzzing prevents regressions**: OSS-Fuzz runs 24/7, catches new bugs in code changes
+4. **Cryptographic code is fragile**: Parsers for ASN.1, X.509, PEM frequently have bugs
+5. **Timeout detection finds DoS bugs**: Infinite loops, algorithmic complexity issues
+
+### Discussion Questions
+
+1. Why does fuzzing find TLS bugs that years of production use don't reveal?
+2. What makes protocol fuzzing (TLS, HTTP/2, DNS) more challenging than file format fuzzing?
+3. How does hardware-assisted coverage (Intel PT) improve fuzzing effectiveness?
+4. What are the limitations of fuzzing for finding cryptographic vulnerabilities vs implementation bugs?
+
+## Day 5: Introduction to `Syzkaller`
+
+- **Goal**: Begin kernel fuzzing with `Syzkaller`.
+- **Activities**:
+  - _Tool_: Install `Syzkaller` on a Linux VM.
+  - _Online Resource_: [`Syzkaller` Documentation](https://github.com/google/syzkaller/blob/master/docs/linux/setup_ubuntu-host_qemu-vm_x86-64-kernel.md)
+  - _Real-World Impact_:
+    - [Syzkaller Dashboard](https://syzkaller.appspot.com/) - Shows thousands of bugs found by syzkaller
+    - [syzkaller: Finding Bugs in the Linux Kernel](https://lwn.net/Articles/677764/) - Overview of syzkaller's impact
+    - Many CVEs discovered: Check [syzkaller bug reports](https://syzkaller.appspot.com/upstream) for real examples
+  - _Exercise_: Start fuzzing the Linux kernel with `Syzkaller`.
+
+```bash
+# Install kernel build dependencies
+sudo apt update
+sudo apt install -y make gcc flex bison libncurses-dev libelf-dev libssl-dev
+
+# Clone Linux kernel (use a recent stable version)
+# Check available tags: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/refs/tags
+cd ~/soft && git clone --branch v6.8 --depth 1 git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git kernel
+
+# Verify kernel version
+cd kernel && git describe --tags
+
+# Configure kernel for syzkaller
+make defconfig
+make kvm_guest.config
+
+# Edit .config to enable syzkaller requirements
+# Use sed or manually edit .config
+sed -i 's/# CONFIG_KCOV is not set/CONFIG_KCOV=y/' .config
+sed -i 's/# CONFIG_DEBUG_INFO_DWARF4 is not set/CONFIG_DEBUG_INFO_DWARF4=y/' .config
+sed -i 's/# CONFIG_KASAN is not set/CONFIG_KASAN=y/' .config
+sed -i 's/# CONFIG_KASAN_INLINE is not set/CONFIG_KASAN_INLINE=y/' .config
+sed -i 's/# CONFIG_CONFIGFS_FS is not set/CONFIG_CONFIGFS_FS=y/' .config
+sed -i 's/# CONFIG_SECURITYFS is not set/CONFIG_SECURITYFS=y/' .config
+echo 'CONFIG_CMDLINE_BOOL=y' >> .config
+echo 'CONFIG_CMDLINE="net.ifnames=0"' >> .config
+
+make olddefconfig
+make -j$(nproc)
+
+# Create VM image
+sudo apt install -y debootstrap
+mkdir -p ~/soft/image && cd ~/soft/image
+wget https://raw.githubusercontent.com/google/syzkaller/master/tools/create-image.sh -O create-image.sh
+chmod +x create-image.sh
+./create-image.sh --distribution trixie --feature full
+
+# Install QEMU
+sudo apt install -y qemu-system-x86
+
+# Test VM boot (optional - verify image works)
+# NOTE: You might need to run this outside of the vm, you might need to change net to e1000
+cd /tmp/
+sudo qemu-system-x86_64 \
+    -m 2G -smp 2 \
+    -kernel ~/soft/kernel/arch/x86/boot/bzImage \
+    -append "console=ttyS0 root=/dev/sda earlyprintk=serial net.ifnames=0" \
+    -drive file=~/soft/image/trixie.img,format=raw \
+    -net user,hostfwd=tcp:127.0.0.1:10021-:22 \
+    -net nic,model=virtio -enable-kvm -nographic \
+    -pidfile vm.pid 2>&1 | tee vm.log
+
+# In another terminal, test SSH access
+ssh -i ~/soft/image/trixie.id_rsa -p 10021 -o "StrictHostKeyChecking no" root@localhost
+
+# Install Go
+cd ~/soft
+GO_VERSION="1.25.4"
+wget "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz"
+export PATH=$PATH:/usr/local/go/bin
+
+# Add to ~/.bashrc for persistence
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+
+# Verify Go installation
+go version
+
+# Clone and build syzkaller
+cd ~/soft && git clone --branch master --depth 1 https://github.com/google/syzkaller.git
+cd syzkaller && make -j$(nproc)
+
+# Create syzkaller configuration
+# NOTE: If you are in the vm with e1000 then you don't need network_device line
+cat > my.cfg << 'EOT'
+{
+    "target": "linux/amd64",
+    "http": "127.0.0.1:56741",
+    "workdir": "/home/USER/soft/syzkaller/workdir",
+    "kernel_src": "/home/USER/soft/kernel",
+    "image": "/home/USER/soft/image/trixie.img",
+    "sshkey": "/home/USER/soft/image/trixie.id_rsa",
+    "ssh_user": "root",
+    "syzkaller": "/home/USER/soft/syzkaller",
+    "procs": 8,
+    "type": "qemu",
+    "vm": {
+        "count": 3,
+        "kernel": "/home/USER/soft/kernel/arch/x86/boot/bzImage",
+        "cmdline": "net.ifnames=0",
+        "cpu": 2,
+        "mem": 2048,
+        "network_device": "virtio-net-pci"
+    }
+}
+EOT
+
+# Replace $USER with actual username
+sed -i "s/USER/$USER/g" my.cfg
+
+# Create workdir and start syzkaller
+mkdir -p workdir
+# NOTE: this might take a while, run with -debug to to identify issues
+sudo ./bin/syz-manager -config=my.cfg
+
+# Access web interface
+# Install text-based browser or use your regular browser
+sudo apt install -y w3m w3m-img
+w3m http://127.0.0.1:56741
+
+# Or open in regular browser: http://127.0.0.1:56741
+```
+
+**Success Criteria**:
+
+- Kernel compiles successfully with KASAN and KCOV enabled
+- VM image creates without errors
+- VM boots and is accessible via SSH
+- Syzkaller manager starts and shows web interface
+- Web interface displays fuzzing statistics
+
+**Expected Outputs**:
+
+- Web interface showing: exec total, crashes, coverage, etc.
+- Crashes appearing in `workdir/crashes/` directory
+- Kernel oops messages in VM logs
+
+**Troubleshooting**:
+
+- If kernel doesn't boot: Check QEMU/KVM is enabled (`lsmod | grep kvm`)
+- If syzkaller can't connect: Verify SSH key permissions (`chmod 600 trixie.id_rsa`)
+- If no crashes: Let run longer - kernel fuzzing takes time
+- Memory issues: Reduce VM count in config if system runs out of RAM
+
+### Real-World Impact: Syzkaller's Contribution to Kernel Security
+
+**Case Study - CVE-2022-32250 (Linux Netfilter Use-After-Free)**:
+
+From Week 1, you learned about this vulnerability. Here's how syzkaller discovered it:
+
+- **Target**: `net/netfilter/nf_tables_api.c` - Linux firewall subsystem
+- **Discovery Date**: May 2022
+- **Fuzzing Duration**: ~72 hours from code introduction to crash
+- **Root Cause**: Reference counting error in stateful expression handling
+
+**The Discovery Process**:
+
+```bash
+# Syzkaller's approach (simplified)
+# 1. System call description for netfilter operations
+{
+    "nfnetlink_create": {
+        "protocol": "NETLINK_NETFILTER",
+        "operations": ["NFT_MSG_NEWTABLE", "NFT_MSG_NEWCHAIN", "NFT_MSG_NEWRULE"]
+    }
+}
+
+# 2. Syscall sequence that triggered the bug
+socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER)
+sendmsg(fd, {
+    type: NFT_MSG_NEWTABLE,
+    flags: NLM_F_CREATE | NLM_F_EXCL,
+    data: [table_attrs]
+})
+sendmsg(fd, {
+    type: NFT_MSG_NEWCHAIN,
+    data: [chain_with_stateful_expr]
+})
+# Trigger: Modify stateful expression in specific sequence
+sendmsg(fd, {
+    type: NFT_MSG_NEWRULE,
+    data: [rule_update_that_frees_expr]
+})
+# Use freed expression -> UAF crash
+
+# 3. KASAN detected use-after-free
+# BUG: KASAN: use-after-free in nf_tables_expr_destroy+0x12/0x20
+# Read of size 8 at addr ffff888012345678 by task syz-executor/1234
+```
+
+**Why Syzkaller Found It**:
+
+1. **Syscall coverage**: Tests all netfilter operations systematically
+2. **Sequence exploration**: Tries millions of syscall orderings
+3. **State tracking**: Maintains kernel state across operations
+4. **KASAN integration**: Immediate detection of memory corruption
+5. **Reproducibility**: Generates C reproducer for developers
+
+**The Reproducer** (simplified):
+
+```c
+// Generated by syzkaller - minimal reproducer
+#include <sys/socket.h>
+#include <linux/netlink.h>
+#include <linux/netfilter/nf_tables.h>
+
+int main(void) {
+    int fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
+
+    // Create table
+    send_nft_msg(fd, NFT_MSG_NEWTABLE, ...);
+
+    // Create chain with stateful expression
+    send_nft_msg(fd, NFT_MSG_NEWCHAIN, ...);
+
+    // Trigger UAF through rule update
+    send_nft_msg(fd, NFT_MSG_NEWRULE, ...);
+
+    return 0;
+}
+```
+
+**Impact**: Local privilege escalation from any user to root on systems with unprivileged user namespaces (default on Ubuntu, Debian). Public exploit available within weeks.
+
+**Case Study - CVE-2023-32629 (Linux Netfilter Race Condition)**:
+
+- **Target**: `net/netfilter/nf_tables_api.c` - Same subsystem, different bug
+- **Bug Class**: Race condition in batch transaction handling
+- **Discovery**: Syzkaller's multi-threaded syscall fuzzing
+- **Impact**: Container escape + privilege escalation
+
+**How Syzkaller Finds Race Conditions**:
+
+```bash
+# Syzkaller executes syscalls in parallel across multiple threads
+# VM 1, Thread 1:
+socket(AF_NETLINK, ...) → fd1
+sendmsg(fd1, NFT_MSG_NEWTABLE, ...)
+
+# VM 1, Thread 2 (simultaneous):
+socket(AF_NETLINK, ...) → fd2
+sendmsg(fd2, NFT_MSG_NEWTABLE, ...)  # Race on same table
+
+# Result: Concurrent access to nf_tables objects without proper locking
+# KASAN detects: use-after-free or memory corruption
+```
+
+**Syzkaller's Advantages for Kernel Fuzzing**:
+
+1. **Syscall descriptions**: Domain-specific language for kernel APIs
+2. **Coverage-guided**: Tracks code coverage to explore new paths
+3. **Multi-threaded**: Finds race conditions naturally
+4. **VM-based isolation**: Kernel crashes don't affect fuzzer
+5. **Reproducers**: Automatic generation of minimal C reproducers
+6. **Bisection**: Automatically finds introducing commit
+
+**Analyzing a Syzkaller Bug**:
+
+```bash
+# Download reproducer from dashboard
+mkdir -p ~/tuts/syz-repro && cd ~/tuts/syz-repro
+wget "https://syzkaller.appspot.com/text?tag=ReproC&x=15ad9542580000" -O repro.c
+
+# Compile and test on vulnerable kernel
+gcc -pthread -o repro repro.c
+./repro
+
+# Expected: Segmentation Fault
+# Kernel log shows UBSAN: array-index-out-of-bounds
+
+# Analyze how it got identified:
+https://syzkaller.appspot.com/bug?extid=77026564530dbc29b854
+```
+
+**Key Insight**: Kernel attack surface is massive. Syzkaller's systematic approach finds bugs that would take years of manual testing.
+
+### Key Takeaways
+
+1. **Syzkaller revolutionized kernel security**: Found 4,500+ bugs that manual testing missed
+2. **Syscall fuzzing requires domain knowledge**: Must understand kernel APIs to fuzz effectively
+3. **Race conditions need parallel execution**: Multi-threaded fuzzing essential
+4. **VM isolation is critical**: Kernel crashes would kill the fuzzer otherwise
+5. **Reproducers enable fixing**: Minimal C programs allow developers to debug quickly
+
+### Discussion Questions
+
+1. Why has syzkaller found thousands of kernel bugs that years of production use didn't reveal?
+2. How does syzkaller's syscall description language enable effective kernel fuzzing?
+3. What makes race condition detection particularly valuable in kernel fuzzing?
+4. Why are networking subsystems (netfilter, inet) the most frequent sources of vulnerabilities?
+5. How do user namespaces make kernel vulnerabilities more dangerous by increasing exploitability?
+
+## Day 6: Crash Analysis and Exploitability Assessment
+
+- **Goal**: Understand crash triage, root cause analysis, and exploitability assessment for fuzzer-discovered bugs.
+- **Activities**:
+  - _Reading_:
+    - "Fuzzing for Software Security Testing and Quality Assurance" by Ari Takanen (Sections 6.1 to 6.6.6)
+    - "The Art of Software Security Assessment" Chapter 5 and 6
+  - _Online Resources_:
+    - [AddressSanitizer Documentation](https://clang.llvm.org/docs/AddressSanitizer.html)
+    - [CASR - Crash Analysis and Severity Report](https://github.com/ispras/casr/blob/master/docs/usage.md)
+    - [OSS-Fuzz Guide](https://google.github.io/oss-fuzz/advanced-topics/reproducing/)
+  - _Real-World Context_:
+    - [Exploitability Ratings](https://www.cisa.gov/known-exploited-vulnerabilities)
+    - [Crash Accumulation During Fuzzing with CASR](https://sydr-fuzz.github.io/papers/crash-accumulation.pdf)
+    - [Effective Fuzzing Harness](https://srlabs.de/blog/unlocking-secrets-effective-fuzzing-harness)
+  - _Concepts_:
+    - Crash deduplication and bucketing
+    - Root cause analysis from stack traces
+    - Exploitability classification
+    - ASAN report interpretation
+    - Building proof-of-concept exploits
+
+### Understanding Crash Analysis Tools
+
+```bash
+# Install crash analysis toolkit
+sudo apt update
+sudo apt install -y gdb python3-pip valgrind binutils
+
+# Install GEF (GDB Enhanced Features) - if you haven't done so already
+#wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py
+#echo "source ~/.gdbinit-gef.py" >> ~/.gdbinit
+
+# Install CASR (Crash Analysis and Severity Report) and rust if you haven't already
+#curl --proto '=https' --tlsv1.2 -sSf "https://sh.rustup.rs" | sh
+#source ~/.cargo/env
+cargo install casr
+
+# Verify installations
+casr-san --help | head -5
+```
+
+### Case Study 1: Analyzing Heap Buffer Overflow
+
+**Scenario**: Fuzzing discovered a crash in an image parser. Let's perform complete analysis.
+
+```bash
+# Create sample vulnerable image parser
+mkdir -p ~/crash_analysis/case1_heap_overflow && cd ~/crash_analysis/case1_heap_overflow
+
+cat > vuln_parser.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+void build_huffman_table(uint8_t *input, size_t size) {
+    if (size < 8) return;
+
+    uint32_t table_size = *(uint32_t*)input;
+    uint8_t *codes = input + 4;
+
+    uint8_t *table = malloc(256);
+
+    // VULNERABILITY: No bounds check on table_size
+    // Can write beyond 256-byte buffer
+    memcpy(table, codes, table_size);  // Heap buffer overflow!
+
+    printf("Built Huffman table with %u codes\n", table_size);
+
+    free(table);
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) return 1;
+
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) return 1;
+
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    uint8_t *data = malloc(size);
+    fread(data, 1, size, f);
+    fclose(f);
+
+    build_huffman_table(data, size);
+
+    free(data);
+    return 0;
+}
+EOF
+
+# Compile with ASAN for detailed crash reports
+clang-19 -g -O0 -fsanitize=address -o vuln_parser_asan vuln_parser.c
+
+# Create crashing input (table_size = 512, overflows 256-byte buffer)
+python3 << 'EOF'
+import struct
+# table_size = 512 (causes 256-byte overflow)
+payload = struct.pack('<I', 512)
+payload += b'A' * 512
+with open('crash_heap_overflow.bin', 'wb') as f:
+    f.write(payload)
+EOF
+
+# Run and capture ASAN output
+./vuln_parser_asan crash_heap_overflow.bin 2>&1 | tee asan_crash.log
+```
+
+**ASAN Output Analysis**:
+
+```
+==37160==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x511000000140 at pc 0x56d6a37d0f62 bp 0x7ffd9f024440 sp 0x7ffd9f023c00
+WRITE of size 512 at 0x511000000140 thread T0
+    #0 0x56d6a37d0f61 in __asan_memcpy
+    #1 0x56d6a38147f5 in build_huffman_table vuln_parser.c:16:5
+    #2 0x56d6a38148fe in main vuln_parser.c:37:5
+
+0x511000000140 is located 0 bytes after 256-byte region [0x511000000040,0x511000000140)
+allocated by thread T0 here:
+    #0 0x56d6a37d3193 in malloc (vuln_parser_asan+0xcc193) (BuildId: e524ec295f274ddf6e407b3941080060bdfc9d1c)
+    #1 0x56d6a38147df in build_huffman_table vuln_parser.c:12:22
+    #2 0x56d6a38148fe in main vuln_parser.c:37:5
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow (vuln_parser_asan+0xc9f61) (BuildId: e524ec295f274ddf6e407b3941080060bdfc9d1c) in __asan_memcpy
+Shadow bytes around the buggy address:
+  0x510ffffffe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x510fffffff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x510fffffff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x511000000000: fa fa fa fa fa fa fa fa 00 00 00 00 00 00 00 00
+  0x511000000080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x511000000100: 00 00 00 00 00 00 00 00[fa]fa fa fa fa fa fa fa
+```
+
+**Interpreting the ASAN Report**:
+
+1. **Bug Type**: `heap-buffer-overflow`
+2. **Operation**: WRITE of size 512
+3. **Location**: `vuln_parser.c:16` in `build_huffman_table()`
+4. **Allocation**: 256-byte buffer at line 12
+5. **Overflow**: Writing 512 bytes into 256-byte buffer = 256 bytes overflow
+
+**Root Cause Analysis**:
+
+```bash
+# View the vulnerable code with context
+cat -n vuln_parser.c | sed -n '6,16p'
+#     6  void build_huffman_table(uint8_t *input, size_t size) {
+#     7      if (size < 8) return;
+#     8
+#     9      uint32_t table_size = *(uint32_t*)input;  // ATTACKER CONTROLLED
+#    10      uint8_t *codes = input + 4;
+#    11
+#    12      uint8_t *table = malloc(256);             // Fixed 256 bytes
+#    13
+#    14      // VULNERABILITY: No bounds check on table_size
+#    15      // Can write beyond 256-byte buffer
+#    16      memcpy(table, codes, table_size);         // Copies attacker-controlled amount!
+```
+
+**Exploitability Assessment**:
+
+```bash
+# Classify crash automatically with CASR (using the ASAN run you captured above)
+#casr-san -o heap_overflow.casrep -- ./vuln_parser_asan crash_heap_overflow.bin 2>&1 | tee casr_heap_overflow.log
+casr-san --stdout -- ./vuln_parser_asan crash_heap_overflow.bin | tee heap_overflow.casrep
+
+# The .casrep and log will contain fields like:
+#   "Type": "EXPLOITABLE",
+#   "ShortDescription": "heap-buffer-overflow(write)",
+
+# You can still use GDB for manual inspection of the corrupted heap if you want:
+gdb ./vuln_parser_asan
+(gdb) run crash_heap_overflow.bin
+```
+
+**Exploitability Classification**: **EXPLOITABLE**
+
+**Reasoning**:
+
+1. **Attacker controls overflow size**: `table_size` from input
+2. **Attacker controls overflow data**: `codes` array content
+3. **Heap corruption possible**: Can overwrite adjacent objects
+4. **Exploitation path**:
+   - Overflow into adjacent heap object
+   - Corrupt function pointer or vtable
+   - Hijack control flow
+   - Execute arbitrary code
+
+**Real-World Example**: Similar to CVE-2023-4863 (libWebP Heap Buffer Overflow) from Week 1.
+
+### Case Study 2: Use-After-Free Analysis
+
+```bash
+mkdir -p ~/crash_analysis/case2_uaf && cd ~/crash_analysis/case2_uaf
+
+cat > vuln_uaf.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char *name;
+    void (*process)(void);
+} Handler;
+
+void default_handler(void) {
+    printf("Default handler\n");
+}
+
+void evil_handler(void) {
+    printf("Evil handler executed! Code execution via UAF.\n");
+}
+
+Handler *handler = NULL;
+
+void register_handler(char *name) {
+    handler = malloc(sizeof(Handler));
+    handler->name = strdup(name);
+    handler->process = default_handler;
+}
+
+void unregister_handler(void) {
+    if (handler) {
+        free(handler->name);
+        free(handler);
+        // BUG: Should set handler = NULL here!
+    }
+}
+
+void attacker_groom_heap(void) {
+    for (int i = 0; i < 1000; i++) {
+        Handler *fake = malloc(sizeof(Handler));
+        fake->name = "pwned";
+        fake->process = evil_handler;
+    }
+}
+
+void call_handler(void) {
+    if (handler) {
+        handler->process();
+    }
+}
+
+int main(int argc, char **argv) {
+    register_handler("test");
+    unregister_handler();
+    attacker_groom_heap();
+    call_handler();
+
+    return 0;
+}
+EOF
+
+# Compile with ASAN
+clang-19 -g -O0 -fsanitize=address -o vuln_uaf_asan vuln_uaf.c
+
+# Run and capture output
+./vuln_uaf_asan 2>&1 | tee uaf_crash.log
+```
+
+**ASAN Output**:
+
+```
+=================================================================
+==38664==ERROR: AddressSanitizer: heap-use-after-free on address 0x502000000010 at pc 0x617b2245a953 bp 0x7ffe92f7c160 sp 0x7ffe92f7c158
+READ of size 8 at 0x502000000010 thread T0
+    #0 0x617b2245a952 in call_handler vuln_uaf.c:44:50
+    #1 0x617b2245a9d0 in main vuln_uaf.c:53:5
+
+0x502000000010 is located 0 bytes inside of 16-byte region [0x502000000010,0x502000000020)
+freed by thread T0 here:
+    #1 0x617b2245a86a in unregister_handler vuln_uaf.c:29:9
+    #2 0x617b2245a9c6 in main vuln_uaf.c:51:5
+
+previously allocated by thread T0 here:
+    #1 0x617b2245a7a5 in register_handler vuln_uaf.c:21:15
+    #2 0x617b2245a9c1 in main vuln_uaf.c:50:5
+
+SUMMARY: AddressSanitizer: heap-use-after-free vuln_uaf.c:44:50 in call_handler
+Shadow bytes around the buggy address:
+  0x501ffffffd80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501ffffffe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501ffffffe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501fffffff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501fffffff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x502000000000: fa fa[fd]fd fa fa fd fa fa fa 00 00 fa fa 00 00
+```
+
+**Exploitability Assessment**:
+
+```bash
+# Classify crash with CASR again (now for a UAF instead of overflow)
+casr-san --stdout -- ./vuln_uaf_asan 2>&1 | tee uaf.casrep
+
+# The report will highlight:
+#   - Bug class: heap-use-after-free
+#   - Severity: "NOT_EXPLOITABLE"
+#   - Reason: ASan instruments the READ of the function pointer *before* the call.
+#     Since it's a read from freed memory, CASR defaults to "Not Exploitable".
+#
+#     This is a critical lesson: Automated tools are heuristics.
+#     A human analyst sees "Read of function pointer from freed memory" -> Critical.
+
+# To prove exploitability, we would need to:
+# 1. Bypass ASan quarantine (so memory is reallocated/valid)
+# 2. Overwrite with a bad pointer
+# 3. Trigger the crash on the JUMP (SEGV), not the UAF read.
+#
+# For now, trust your manual analysis: Controlling a function pointer is exploitable.
+
+# For deeper debugging, verify the exploit manually in GDB:
+# NOTE: You must disable ASan quarantine to allow the freed chunk to be reused!
+# Otherwise, malloc() will return a new address, and handler->process will still be old/garbage.
+export ASAN_OPTIONS=detect_leaks=0:quarantine_size_mb=0
+
+gdb ./vuln_uaf_asan
+(gdb) break vuln_uaf.c:44   # Break at call_handler (before crash)
+(gdb) run
+(gdb) p handler
+# $1 = (Handler *) 0x...
+
+(gdb) p *handler
+# With quarantine=0, you should see:
+# name = "pwned"
+# process = <evil_handler>
+
+(gdb) p handler->process
+# Should point to evil_handler
+
+(gdb) continue
+# Execution should flow to evil_handler() (or crash if ASan still catches the shadow marker)
+
+```
+
+**Exploitability Classification**: **EXPLOITABLE** (Verified via manual analysis)
+
+> [!NOTE]: Automated tools like CASR may label this `NOT_EXPLOITABLE` because ASan instruments the function pointer _read_ before the call. Manual verification (as shown above) proves control flow hijack is possible.
+
+**Exploitation Strategy**:
+
+1. **Heap grooming**: Allocate/free to position objects
+2. **Reclaim freed memory**: Allocate object of same size (requires bypassing ASan quarantine in lab)
+3. **Control freed memory contents**: Fill with attacker data
+4. **Trigger UAF**: Call `call_handler()`
+5. **Function pointer hijack**: `handler->process` points to attacker-controlled address
+6. **Result**: Arbitrary code execution
+
+**Real-World Example**: Similar to CVE-2024-2883 (Chrome ANGLE UAF) from Week 1.
+
+### Case Study 3: Integer Overflow Leading to Heap Corruption
+
+```bash
+mkdir -p ~/crash_analysis/case3_integer_overflow && cd ~/crash_analysis/case3_integer_overflow
+
+cat > vuln_intoverflow.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+void process_image(uint32_t width, uint32_t height, uint8_t *data) {
+    size_t pixel_count = width * height;
+    size_t buffer_size = pixel_count * 4;
+
+    printf("Allocating %zu bytes for %ux%u image\n", buffer_size, width, height);
+
+    uint8_t *buffer = malloc(buffer_size);
+
+    for (size_t i = 0; i < (size_t)width * height; i++) {
+        // WRITES out of bounds immediately
+        // Use modulo to avoid reading out of bounds of 'data'
+        buffer[i * 4] = data[i % 1024];
+    }
+
+    free(buffer);
+}
+
+int main(int argc, char **argv) {
+    // Attacker-controlled dimensions
+    uint32_t width = 0x10000;   // 65536
+    uint32_t height = 0x10000;  // 65536
+
+    uint8_t fake_data[1024];
+    memset(fake_data, 'A', sizeof(fake_data));
+
+    process_image(width, height, fake_data);
+
+    return 0;
+}
+EOF
+
+# Compile with ASAN and UBSAN
+clang-19 -g -O0 -fsanitize=address,unsigned-integer-overflow -o vuln_int_asan vuln_intoverflow.c
+
+# Run
+./vuln_int_asan 2>&1 | tee intoverflow_crash.log
+```
+
+**Analysis**:
+
+```
+vuln_intoverflow.c:7:32: runtime error: unsigned integer overflow: 65536 * 65536 cannot be represented in type 'uint32_t' (aka 'unsigned int')
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior vuln_intoverflow.c:7:32
+=================================================================
+==39011==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x502000000014 at pc 0x5fa5104bd933 bp 0x7ffd7d3885a0 sp 0x7ffd7d388598
+WRITE of size 1 at 0x502000000014 thread T0
+    #0 0x5fa5104bd932 in process_image vuln_intoverflow.c:17:23
+    #1 0x5fa5104bdad0 in main vuln_intoverflow.c:31:5
+
+0x502000000014 is located 3 bytes after 1-byte region [0x502000000010,0x502000000011)
+allocated by thread T0 here:
+    #1 0x5fa5104bd7fc in process_image vuln_intoverflow.c:12:23
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow vuln_intoverflow.c:17:23 in process_image
+Shadow bytes around the buggy address:
+  0x501ffffffd80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501ffffffe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501ffffffe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501fffffff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x501fffffff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x502000000000: fa fa[01]fa fa fa fa fa fa fa fa fa fa fa fa fa
+
+```
+
+**Root Cause**:
+
+1. **Integer Overflow**: `width * height` overflows 32-bit integer range, wrapping to 0.
+2. **Under-allocation**: `malloc(0)` allocates a tiny chunk.
+3. **Logic Mismatch**: Loop uses proper 64-bit bounds (or nested loops), iterating 4 billion times.
+4. **Heap Corruption**: Loop writes far beyond the allocated chunk.
+
+**Exploitability Assessment**:
+
+```bash
+# Classify crash with CASR
+# Note: UBSAN might print an error first, but ASAN catches the memory corruption
+casr-san --stdout -- ./vuln_int_asan 2>&1 | tee intoverflow.casrep
+
+# The report will highlight:
+#    "Type": "EXPLOITABLE",
+#    "ShortDescription": "heap-buffer-overflow(write)",
+#    "Description": "Heap buffer overflow",
+
+# Verify manually in GDB:
+gdb ./vuln_int_asan
+(gdb) break vuln_intoverflow.c:17   # Break inside the loop
+(gdb) run
+(gdb) p buffer_size
+# $1 = 0
+(gdb) p buffer
+# $2 = (uint8_t *) 0x... (Valid small chunk)
+(gdb) x/4gx buffer
+# Check adjacent memory (likely metadata or other chunks)
+(gdb) step
+# Watch the write to buffer[0] corrupting the heap
+(gdb) continue
+```
+
+**Exploitability Classification**: **EXPLOITABLE**
+
+**Exploitation Strategy**:
+
+1. **Heap Grooming**: Allocate a sensitive object (e.g., a structure with a function pointer) immediately after the vulnerable 0-byte allocation.
+2. **Trigger Overflow**: Send input with dimensions `0x10000 * 0x10000` to cause integer overflow -> `malloc(0)`.
+3. **Overwrite**: The loop writes attacker data (`fake_data`) into the adjacent sensitive object.
+4. **Hijack**: Trigger the use of the corrupted object (e.g., call the function pointer).
+
+### Building Proof-of-Concept Exploits
+
+#### Heap Overflow Example
+
+```bash
+cd ~/crash_analysis/case1_heap_overflow
+cat > buf_ov.py << 'EOF'
+#!/usr/bin/env python3
+# POC for heap buffer overflow in vuln_parser
+
+import struct
+
+def craft_overflow_input():
+    """Create input that causes a massive overflow"""
+    # Target allocates 256 bytes. We claim size is 512.
+    table_size = 512
+
+    # Structure: [Size (4 bytes)] [Data (512 bytes)]
+    payload = struct.pack('<I', table_size)
+    payload += b'A' * table_size
+
+    return payload
+
+with open('poc_exploit.bin', 'wb') as f:
+    f.write(craft_overflow_input())
+
+print("[+] Created poc_exploit.bin")
+print("[+] Run the ASan build for diagnostics or the no-sanitizer build for raw exploitation.")
+EOF
+python3 buf_ov.py
+# Diagnostic run (shows detailed ASan report)
+./vuln_parser_asan poc_exploit.bin
+
+# Realistic exploit run (no sanitizers, glibc notices corrupted heap metadata)
+clang-19 -g -O0 -o vuln_parser_nosan vuln_parser.c
+MALLOC_CHECK_=0 ./vuln_parser_nosan poc_exploit.bin
+```
+
+#### Use-After-Free Example
+
+```bash
+cd ~/crash_analysis/case2_uaf
+
+# Build a runtime version without sanitizers (ensures freed chunks are reused immediately)
+clang-19 -g -O0 -o vuln_uaf_nosan vuln_uaf.c
+
+# Optional: keep the ASan build for triage but disable quarantine to watch exploitation
+# ASAN_OPTIONS=quarantine_size_mb=0 ./vuln_uaf_asan
+
+# Execute the no-sanitizer build to watch the hijacked handler fire
+./vuln_uaf_nosan
+```
+
+Expected console output:
+
+```
+Evil handler executed! Code execution via UAF.
+```
+
+To force an outright crash (showing instruction-pointer control), change the spray in `attacker_groom_heap()` to:
+
+```c
+fake->process = (void (*)(void))0x4141414141414141ULL;
+```
+
+Running `./vuln_uaf_nosan` now ends with a segfault at `0x4141414141414141`, demonstrating control-flow hijack without AddressSanitizer interfering.
+
+### Key Takeaways
+
+1. **Sanitized vs non-sanitized builds**: Use ASan/UBSan/KASAN builds for **triage and root-cause**, then switch to **no-sanitizer builds** (with knobs like `ASAN_OPTIONS` or `MALLOC_CHECK_`) to study realistic heap behavior and exploitation.
+2. **Automated ratings are heuristics**: CASR’s `Type`/`Severity` fields are a **starting point only**; Case Study 2 showed a UAF rated `NOT_EXPLOITABLE` even though a function pointer hijack is clearly possible.
+3. **Crash location vs root cause**: Tools often stop at the **first invalid access** (e.g., a read from freed memory) while the real exploit primitive (e.g., control-flow hijack) may be one instruction later.
+4. **Exploitability hinges on control**: In all three case studies, exploitation becomes realistic when the attacker controls **sizes (length, dimensions) and data** that drive allocation and memory writes.
+5. **Systematic PoC development**: The path is always _fuzz → crash → triage (ASan + CASR) → root cause → minimal reproducer → exploit PoC (heap metadata or function pointer overwrite)_.
+
+### Discussion Questions
+
+1. In your own workflow, when would you prefer to keep AddressSanitizer enabled, and when would you switch to a no-sanitizer build while evaluating exploitability?
+2. How could CASR’s `NOT_EXPLOITABLE` rating for the UAF case mislead a less experienced analyst, and what manual checks (in GDB) prevent that mistake?
+3. In the integer-overflow case, which variables and addresses would you inspect in GDB to confirm both under-allocation and the ensuing heap overwrite?
+4. How does the exact crash site (e.g., first invalid read vs later jump through a corrupted function pointer) change your assessment of exploitability and which tools notice it?
+5. How do modern mitigations (ASLR, DEP, hardened allocators, CFI) interact with the exploitation strategies you used in Case Studies 1–3, and what extra steps would be needed in a real target?
+
+### Further Reading
+
+#### Blog Posts and Case Studies
+
+- [Leveling Up Fuzzing: Finding more vulnerabilities with AI ](https://security.googleblog.com/2024/11/leveling-up-fuzzing-finding-more.html)
+- [AFL Success Stories](https://lcamtuf.blogspot.com/2014/11/afl-fuzz-nobody-expects-cdata-sections.html)
+- [5 CVEs Found with Feedback-Based Fuzzing](https://www.code-intelligence.com/blog/5-cves-found-with-feedback-based-fuzzing)
+- [Syzkaller: Finding Bugs in the Linux Kernel](https://lwn.net/Articles/677764/)
+- [OpenSSL Fuzzing Guide](https://www.openssl.org/docs/man3.3/man7/ossl-guide-fuzzing.html)
+- [Slice: SAST + LLM Interprocedural Context Extractor](https://noperator.dev/posts/slice/) - Using build-free CodeQL + Tree-Sitter + GPT‑5 to triage ~1700 static UAF candidates in the Linux kernel down to a single real bug (CVE-2025-37778), a good complement to fuzzing-based crash triage.
+
+#### Practice Targets
+
+- [Fuzzing-Module](https://github.com/alex-maleno/Fuzzing-Module) - Learning exercises
+- [Damn Vulnerable C Program](https://github.com/hardik05/Damn_Vulnerable_C_Program) - Vulnerable code for practice
+
+## Day 7: Fuzzing Harness Development and Real-World Campaigns
+
+- **Goal**: Learn to write effective fuzzing harnesses and understand real-world fuzzing campaigns.
+- **Activities**:
+  - _Reading_:
+    - [libFuzzer Tutorial](https://github.com/google/fuzzing/blob/master/tutorial/libFuzzerTutorial.md)
+    - [OSS-Fuzz Integration Guide](https://google.github.io/oss-fuzz/getting-started/new-project-guide/)
+  - _Online Resources_:
+    - [Fuzzing Harness Examples](https://github.com/google/fuzzing/tree/master/tutorial)
+    - [ClusterFuzz](https://google.github.io/clusterfuzz/) - Continuous fuzzing infrastructure
+  - _Concepts_:
+    - Harness design principles
+    - In-process vs out-of-process fuzzing
+    - Persistent mode optimization
+    - Seed corpus curation
+    - Continuous fuzzing integration
+
+### What is a Fuzzing Harness?
+
+A fuzzing harness is the code that:
+
+1. Receives fuzzer-generated input
+2. Prepares that input for the target API
+3. Calls the target functionality
+4. Handles errors/cleanup
+
+**Example - Bad Harness vs Good Harness**:
+
+```cpp
+// BAD HARNESS: Slow, inefficient
+int main(int argc, char **argv) {
+    FILE *f = fopen(argv[1], "rb");  // File I/O every iteration!
+    // ... read file ...
+    // ... call target API ...
+    fclose(f);
+    return 0;
+}
+
+// GOOD HARNESS: Fast, in-process
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    // Direct memory buffer, no I/O
+    // Called thousands of times per second in same process
+    target_api(data, size);
+    return 0;
+}
+```
+
+### Case Study: Writing Harness for JSON Parser
+
+**Target**: json-c library (real-world JSON parser)
+
+```bash
+mkdir -p ~/harness_dev && cd ~/harness_dev && mkdir json_harness && cd json_harness
+
+# Clone json-c
+git clone --depth 1 https://github.com/json-c/json-c.git
+
+cd ~/harness_dev/json_harness/json-c
+export CC=clang-19
+export CXX=clang++-19
+export CFLAGS="-fno-sanitize-coverage=trace-cmp -fsanitize=fuzzer-no-link,address -g -O1"
+export CXXFLAGS="-fno-sanitize-coverage=trace-cmp -fsanitize=fuzzer-no-link,address -g -O1"
+cmake -DBUILD_SHARED_LIBS=OFF ./
+make -j$(nproc)
+
+cd ~/harness_dev/json_harness
+
+# Create fuzzing harness
+cat > fuzz_parse.c << 'EOF'
+#include <json-c/json.h>
+#include <stdint.h>
+#include <stddef.h>
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    const char *data1 = (const char *)data;
+    json_tokener *tok = json_tokener_new();
+    json_object *obj = json_tokener_parse_ex(tok, data1, size);
+
+    if (obj) {
+        // Exercise different API functions to increase coverage
+        json_object_to_json_string_ext(obj, JSON_C_TO_STRING_PRETTY | JSON_C_TO_STRING_SPACED);
+
+        if (json_object_is_type(obj, json_type_object)) {
+            json_object_object_foreach(obj, key, val) {
+                (void)json_object_get_type(val);
+                (void)json_object_get_string(val);
+            }
+        }
+
+        if (json_object_is_type(obj, json_type_array)) {
+            size_t len = json_object_array_length(obj);
+            for (size_t i = 0; i < len; i++) {
+                json_object_array_get_idx(obj, i);
+            }
+        }
+
+        json_object_put(obj);
+    }
+
+    json_tokener_free(tok);
+    return 0;
+}
+EOF
+
+# Compile with libFuzzer
+clang-19 -g -fsanitize=address,fuzzer \
+    -fno-sanitize-coverage=trace-cmp \
+    -I. -Ijson-c \
+    fuzz_parse.c \
+    json-c/libjson-c.a \
+    -o fuzz_json
+
+# Create seed corpus
+mkdir -p corpus
+cat > corpus/valid1.json << 'EOF'
+{"name": "test", "value": 42}
+EOF
+
+cat > corpus/valid2.json << 'EOF'
+[1, 2, 3, {"nested": "object"}]
+EOF
+
+cat > corpus/valid3.json << 'EOF'
+{
+    "string": "value",
+    "number": 123,
+    "boolean": true,
+    "null": null,
+    "array": [1, 2, 3],
+    "object": {"key": "value"}
+}
+EOF
+
+# Run libFuzzer, it might take a while to actually crash
+./fuzz_json corpus/ -max_total_time=300 -print_final_stats=1 -max_len=10000
+```
+
+#### Harness Design Principles Applied
+
+1. **In-process execution**: `LLVMFuzzerTestOneInput` - no fork/exec overhead
+2. **Direct API targeting**: Calls `json_tokener_parse_ex` directly
+3. **Coverage maximization**: Exercises multiple code paths (objects, arrays, serialization)
+4. **Proper cleanup**: Frees allocated memory to avoid OOM
+5. **Sanitizer-friendly**: Works with ASAN/UBSAN for bug detection
+
+### Case Study: Fuzzing Archive Extractors
+
+While CVE-2023-38831 was in closed-source WinRAR, let's fuzz open-source alternatives with similar architectures.
+
+```bash
+cd ~/harness_dev && mkdir archive_campaign && cd archive_campaign
+
+# Target: libarchive (used by many archive tools)
+git clone --depth 1 --branch v3.5.1 https://github.com/libarchive/libarchive.git
+cd ~/harness_dev/archive_campaign/libarchive
+
+export CC=clang-19
+export CXX=clang++-19
+export CFLAGS="-fno-sanitize-coverage=trace-cmp -fsanitize=fuzzer-no-link,undefined,address -g -O1"
+export CXXFLAGS="-fno-sanitize-coverage=trace-cmp -fsanitize=fuzzer-no-link,undefined,address -g -O1"
+
+cmake -DENABLE_TEST=OFF .
+make -j$(nproc)
+
+cd ~/harness_dev/archive_campaign/
+
+cat > fuzz_archive_read.c << 'EOF'
+#include "archive.h"
+#include "archive_entry.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    struct archive *a;
+    struct archive_entry *entry;
+    int r;
+
+    a = archive_read_new();
+    if (!a) return 0;
+
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+
+    r = archive_read_open_memory(a, data, size);
+    if (r != ARCHIVE_OK) {
+        archive_read_free(a);
+        return 0;
+    }
+
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(entry);
+        int64_t size = archive_entry_size(entry);
+        mode_t mode = archive_entry_mode(entry);
+        time_t mtime = archive_entry_mtime(entry);
+
+        const char *linkname = archive_entry_symlink(entry);
+        const char *hardlink = archive_entry_hardlink(entry);
+
+        const void *buff;
+        size_t read_size;
+        int64_t offset;
+        while (archive_read_data_block(a, &buff, &read_size, &offset) == ARCHIVE_OK) {
+            // Just consume data, no processing needed
+        }
+    }
+
+    archive_read_free(a);
+    return 0;
+}
+EOF
+
+# Compile harness
+clang-19 -g -O1 -fsanitize=address,undefined,fuzzer \
+    -fno-sanitize-coverage=trace-cmp \
+    -I./libarchive/libarchive \
+    fuzz_archive_read.c -o fuzz_archive \
+    libarchive/libarchive/libarchive.a \
+    -lz -llzma -lzstd -lxml2 -lcrypto -ldl -lpthread
+
+# Build diverse seed corpus
+mkdir -p corpus_archive
+
+# Valid archives of different formats
+# ZIP
+echo "Test file" > /tmp/test.txt
+zip corpus_archive/sample.zip /tmp/test.txt
+
+# TAR.GZ
+tar czf corpus_archive/sample.tar.gz /tmp/test.txt
+
+# 7z (if available)
+7z a corpus_archive/sample.7z /tmp/test.txt 2>/dev/null || true
+
+# RAR (if available)
+rar a corpus_archive/sample.rar /tmp/test.txt 2>/dev/null || true
+
+# Archive with symlink (common bug location)
+ln -sf /etc/passwd /tmp/symlink_test
+tar czf corpus_archive/with_symlink.tar.gz /tmp/symlink_test 2>/dev/null || true
+
+# Run fuzzing campaign
+./fuzz_archive corpus_archive/ \
+    -max_total_time=3600 \
+    -timeout=30 \
+    -rss_limit_mb=2048 \
+    -print_final_stats=1
+```
+
+**What This Campaign Targets**:
+
+1. **Format parsing bugs**: TAR, ZIP, RAR, 7z, etc.
+2. **Compression algorithms**: gzip, bzip2, lzma, zstd
+3. **Path traversal**: Symlink/hardlink handling (like CVE-2023-38831)
+4. **Metadata parsing**: Timestamps, permissions, extended attributes
+5. **Memory corruption**: Buffer overflows in decompression routines
+
+**Expected Findings** (based on real OSS-Fuzz results):
+
+- Integer overflows in size calculations
+- Path traversal via symlinks
+- Buffer overflows in compression codecs
+- Use-after-free in error handling paths
+
+### Key Takeaways
+
+1. **Harness Design is Critical**: Efficient harnesses (in-process, persistent) significantly outperform naive `fork()/exec()` wrappers.
+2. **Target Logic, Not Just I/O**: Good harnesses bypass CLI parsing to exercise core API logic directly (e.g., `json_tokener_parse_ex`).
+3. **Seed Corpus Quality**: A diverse, minimized corpus of valid inputs accelerates code coverage discovery.
+4. **Sanitizers Enable Detection**: Memory bugs (ASAN) and undefined behavior (UBSAN) are only found if the harness is compiled with them.
+5. **Continuous Integration**: Tools like OSS-Fuzz automate the "find → fix → verify" loop, preventing regressions in evolved code.
+
+### Discussion Questions
+
+1. Why is an in-process harness (like `LLVMFuzzerTestOneInput`) orders of magnitude faster than a file-based CLI wrapper?
+2. How does defining a proper seed corpus (e.g., valid JSON/ZIP files) help the fuzzer penetrate deeper into the target's logic?
+3. What are the risks of "over-mocking" in a harness (e.g., bypassing too much initialization) versus "under-mocking" (doing too much I/O)?
+4. How do you handle state cleanup in a persistent-mode harness to prevent false positives from memory leaks or global state pollution?
+5. Why is it important to fuzz different layers of an application (e.g., the compression layer vs. the archive parsing layer) separately?
+
+## Week 2 Capstone Project: The Fuzzing Campaign
+
+- **Goal**: Apply the week's techniques to discover and analyze a vulnerability in a real-world open source target or a complex challenge binary.
+- **Activities**:
+  - **Select a Target**:
+    - Choose a C/C++ library that parses complex data (e.g., JSON, XML, Images, Archives, Network Packets).
+    - Suggestions: `json-c`, `libarchive`, `libpng`, `tinyxml2`, `mbedtls`, or a known vulnerable version of a project (e.g., `libwebp` 1.0.0).
+  - **Harness Development**:
+    - Write a `LLVMFuzzerTestOneInput` harness or an AFL++ persistent mode harness.
+    - Ensure the harness compiles with ASAN and UBSAN.
+  - **Campaign Execution**:
+    - Gather a valid seed corpus (from the internet or by generating samples).
+    - Minimize the corpus using `afl-cmin` or `afl-tmin` (or libFuzzer's merge mode).
+    - Run the fuzzer for at least 4 hours (or until a crash is found).
+  - **Triage and Analysis**:
+    - Deduplicate crashes.
+    - Use GDB and ASAN reports to identify the root cause (e.g., Heap Overflow, UAF).
+    - Determine exploitability (Control of instruction pointer? Arbitrary write?).
+  - **Report**:
+    - Document the target, harness code, campaign commands, and crash analysis.
+
+### Deliverables
+
+- A `fuzzing_report.md` containing:
+  - **Target Details**: Project name, version, and function targeted.
+  - **Harness Code**: The C/C++ harness you wrote.
+  - **Campaign Stats**: Fuzzer used, duration, executions/sec, and coverage achieved.
+  - **Crash Analysis**: ASAN output, GDB investigation, and root cause explanation.
+  - **PoC**: A minimal input file that triggers the crash.
+
+### Looking Ahead to Week 3
+
+Next week, you'll learn patch diffing - analyzing security updates to understand what was fixed and discovering variant vulnerabilities. You'll see how fuzzing discoveries lead to patches, and how analyzing those patches can reveal additional bugs.
